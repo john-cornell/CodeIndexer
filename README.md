@@ -116,6 +116,7 @@ python -m codeidx index [REPO] [options]
 | `--sln PATH` | Solution file for MSBuild project graph and multi-project resolution |
 | `--csproj PATH` | Repeatable; explicit `.csproj` roots (if no `--sln`, one may be chosen interactively) |
 | `--force` | Re-parse **all** `.cs` files even if unchanged (use after upgrading the tool or when you need a full graph refresh) |
+| `--no-sln` | Skip `.sln` / `.csproj` discovery and **any interactive prompt**; index all files under `REPO` without a solution graph (use when many solutions exist or for batch scripts). Incompatible with `--sln` / `--csproj`. |
 | `--store-content` | Store raw file text for `grep-text` (larger DB) |
 | `--ignore PATTERN` | Extra gitignore-style ignore (repeatable) |
 
@@ -133,11 +134,13 @@ All use the same default DB as **`index`** unless **`--db`** is set.
 |------------|--------|
 | `stats` | DB path, size, row counts, `meta` (sanity check for tooling) |
 | `find-symbol` | Lookup by `--name`, optional `--kind`, `--file-glob` |
-| `find-references` | Incoming edges to a symbol (`--symbol-id` or `--qualified`) |
+| `find-references` | Indexed **edges whose `dst_symbol_id` is this symbol** (`--symbol-id` or `--qualified`)—**not** full IDE “find all references” (see [TRADEOFFS](docs/TRADEOFFS.md#type-symbols-and-find-references)) |
 | `callers-of` | Call edges to `--symbol-id` |
 | `implementations-of` | Types implementing an **interface** symbol id |
 | `path-search` | Files whose path contains a substring |
 | `grep-text` | Substring or `--regex` over stored content (needs `--store-content` when indexing) |
+
+**`find-references` vs “every use of this type”:** The index only records certain relationships (calls, inheritance bases, usings). Types used in generics, DI registration, field types, etc. often have **no** incoming graph edges—use partial **`find-symbol`**, **`symbols_fts` / `LIKE`**, or **`grep-text`** for that. Details: [docs/TRADEOFFS.md](docs/TRADEOFFS.md#type-symbols-and-find-references).
 
 Example:
 
@@ -174,6 +177,7 @@ Cross-project types (e.g. interface in a referenced project) are resolved when i
 | `files_parsed: 0`, all skipped | Expected if nothing changed; use **`--force`** to re-parse. |
 | MCP shows empty schema | Wrong **`--db-path`**; confirm with **`query stats`** and `%LOCALAPPDATA%\codeidx\codeidx.db` on Windows. |
 | “No implementations” for an interface | Re-index with **`--sln`** covering the project that declares the interface; see TRADEOFFS. |
+| **`find-references` empty for a type** | Normal if nothing in the indexed edge set points at that symbol (no calls/callees resolved to it, no base list). Use substring search / FTS / `grep-text`; see [TRADEOFFS](docs/TRADEOFFS.md#type-symbols-and-find-references). |
 
 ---
 
@@ -181,7 +185,7 @@ Cross-project types (e.g. interface in a referenced project) are resolved when i
 
 | Doc | Content |
 |-----|--------|
-| [docs/TRADEOFFS.md](docs/TRADEOFFS.md) | Precision, inheritance edges, incremental behavior, limitations |
+| [docs/TRADEOFFS.md](docs/TRADEOFFS.md) | Precision, inheritance edges, **type symbols vs find-references**, incremental behavior, limitations |
 | [docs/example_queries.sql](docs/example_queries.sql) | Sample SQL (FTS, edges, joins) |
 
 ---

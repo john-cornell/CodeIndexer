@@ -65,6 +65,12 @@ def main() -> None:
     is_flag=True,
     help="Re-parse every file even when size/mtime/hash match (full refresh).",
 )
+@click.option(
+    "--no-sln",
+    "no_sln",
+    is_flag=True,
+    help="Skip .sln/.csproj discovery and any interactive prompt; index files only (weaker cross-project symbol resolution).",
+)
 def index_cmd(
     repo: Path | None,
     db_path: Path | None,
@@ -73,6 +79,7 @@ def index_cmd(
     store_content: bool,
     extra_ignores: tuple[str, ...],
     force: bool,
+    no_sln: bool,
 ) -> None:
     """Scan REPO and update DB. If REPO is omitted, uses the current directory."""
     db_resolved = (db_path or default_db_path()).resolve()
@@ -81,13 +88,20 @@ def index_cmd(
     root = (repo or Path(".")).resolve()
     sln_path = sln.resolve() if sln else None
     csproj_list = [p.resolve() for p in csproj] if csproj else None
+    if no_sln and (sln_path is not None or csproj_list):
+        click.echo("Error: --no-sln cannot be combined with --sln or --csproj.", err=True)
+        sys.exit(2)
+
     if sln_path is not None and csproj_list:
         click.echo(
             "Note: --sln is set; explicit --csproj entries are ignored for project graph.",
             err=True,
         )
 
-    if sln_path is None and not csproj_list:
+    if no_sln:
+        sln_path = None
+        csproj_list = None
+    elif sln_path is None and not csproj_list:
         slns = discover_solution_files(root)
         csps = discover_csproj_files(root)
         if len(slns) >= 1:
@@ -164,7 +178,13 @@ def q_find_symbol(
         )
 
 
-@query_group.command("find-references")
+@query_group.command(
+    "find-references",
+    help=(
+        "List edges where dst_symbol_id matches the symbol (indexed calls, bases, etc.). "
+        "Not full IDE 'find all references' for types; see docs/TRADEOFFS.md."
+    ),
+)
 @click.option("--symbol-id", "symbol_id", type=int, default=None)
 @click.option("--qualified", default=None)
 @click.option("--limit", default=200, type=int)

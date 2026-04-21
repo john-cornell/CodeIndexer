@@ -44,6 +44,20 @@ Always present after indexing for C# base list edges:
 
 External-only or ambiguous bases may remain unresolved; consumers should not treat `inherits` as “definitely a class” without checking `dst_kind` or `implements`.
 
+## Type symbols and `find-references`
+
+The CLI’s **`find-references`** (and SQL `WHERE dst_symbol_id = ?` on `edges`) lists **only rows the indexer actually emitted** with that destination symbol. v1 emits **`calls`**, **`inherits` / `implements`** (C# **base list** only), and **`imports`**.
+
+**Most uses of a type name are not edges:** generic arguments (`RegisterType<MyEntity>()`), field/property types, `typeof(T)`, attributes, string keys, and DI wiring usually **do not** create an `edges` row pointing at the type’s symbol id. A type symbol can therefore have **zero** incoming edges even when the type is heavily used—this is expected, not a missing “generic inheritance” row.
+
+For **“who references this type”** in the broad sense, combine:
+
+- **`symbols_fts`** / `symbols` with **`LIKE '%PartialName%'`** (bounded `LIMIT`) when the exact short name is unknown;
+- **`query find-symbol`** with a substring or path filter;
+- **`grep-text`** (requires **`--store-content`** when indexing) for text occurrences.
+
+A future indexer could add **`type_ref`**-style edges from type-mention sites; until then, grep/FTS complement the graph.
+
 ## Incremental indexing
 
 A file is skipped when **size**, **mtime**, and **sha256** match the last index. If you copy files preserving timestamps incorrectly, or hash collisions (theoretical), you could skip needed work—prefer a full re-index after bulk restores. After upgrading the indexer or when you need all symbols/edges recomputed, use `python -m codeidx index --force` (same DB path) or delete the database and index again.

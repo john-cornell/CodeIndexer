@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,7 +53,10 @@ class CSharpHandler(LanguageHandler):
     name = "csharp"
 
     def __init__(self) -> None:
-        self._parser = get_parser("c_sharp")
+        # tree_sitter / tree-sitter-languages emit FutureWarning for Language(path, name) until upgraded.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=FutureWarning)
+            self._parser = get_parser("c_sharp")
 
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() == ".cs"

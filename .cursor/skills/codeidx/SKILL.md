@@ -1,5 +1,5 @@
 ---
-name: codeidx-sqlite
+name: codeidx
 description: >-
   Answers code-structure questions using the codeidx SQLite index (symbols,
   edges, FTS) via the configured SQLite MCP tools. Use when the user asks about
@@ -8,7 +8,7 @@ description: >-
   tree; or when exploring relationships in indexed C# code.
 ---
 
-# codeidx SQLite index (MCP)
+# codeidx index (MCP)
 
 ## Assumptions
 
@@ -16,6 +16,36 @@ description: >-
 - **SQLite MCP** is already configured in Cursor and points at that database.
 
 Use the **MCP tools** the server exposes (e.g. `read_query`, `list_tables`, schema/description helpers—names vary by server) as the **primary** way to answer.
+
+## Empty results — retry before giving up
+
+If the first query, **`find-symbol`**, or FTS **`MATCH`** returns **nothing**, **do not stop**. Retry in order, keeping **`LIMIT`** small:
+
+1. **Individual words from the target name**  
+   Split compound identifiers: `AutoTimeService` → try `AutoTime`, `Service`, `Time`. Split `qualified_name` on `.` and search **`name`** or **`LIKE '%segment%'`** for **one segment at a time** (symbols table or `symbols_fts`).
+
+2. **Similar / related words**  
+   Try **synonyms or alternate role words** (e.g. *handler* / *consumer* / *processor*), **abbreviations** vs full words, and **casing** (`AutoTime` vs `Autotime`) with `LIKE` or case-insensitive patterns if your SQL layer supports it.
+
+3. **Shorter needles**  
+   Drop namespaces: match on **unqualified `name`** or the **last segment** of `qualified_name` only. Avoid matching the full `Ns.A.B.LongTypeName` in one go unless you know it is exact.
+
+4. **Looser FTS**  
+   Use **prefix** tokens where FTS5 allows (`term*`), **fewer quoted phrases**, or **one token per query** instead of a multi-word `MATCH` string.
+
+5. **Path and file filters**  
+   If you know a folder (e.g. `Services`, `Integrations`), constrain with **`files.path LIKE '%...%'`** and combine with a **broad symbol `name LIKE`**.
+
+6. **Content grep last**  
+   **`grep-text`** / `file_contents_fts` only if content was indexed (`--store-content`); use **short patterns** and retry with **single words**.
+
+Stay bounded; iterate terms before falling back to wide repo grep or bulk file reads.
+
+## Type symbols and incoming edges
+
+**A type symbol often has no rows** where `dst_symbol_id = <that id>` (and none where `src_symbol_id = <that id>` except its own declaration edges). The index does **not** model every **mention** of a type (generic arguments, field types, `RegisterType<T>()`, DI, etc.)—only **`calls`**, **base-list** `inherits`/`implements`, and **`imports`**.
+
+For **“who uses this type”**, use **`symbols_fts`**, bounded **`LIKE`** on `name`/`qualified_name`, path filters, and **`grep-text`** if content was indexed. Do not treat empty **`find-references`** as proof the type is unused.
 
 ## Workflow
 
