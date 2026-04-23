@@ -17,7 +17,32 @@ description: >-
 - The **codeidx index** is already built (SQLite on disk).
 - **SQLite MCP** is already configured in Cursor and points at that database.
 
-Use the **MCP tools** the server exposes (e.g. `read_query`, `list_tables`, schema/description helpers—names vary by server) as the **primary** way to answer.
+Use the **MCP tools** the server exposes (e.g. `read_query`, `list_tables`, schema/description helpers—names vary by server) as the **primary** way to answer. You do **not** need `SELECT name FROM sqlite_master` on every turn if you already have the table list below; use **`list_tables` / `describe_table`** only when you need a column you are unsure of (see [schema.sql](../../../src/codeidx/db/schema.sql) in this repo).
+
+## Schema reference (codeidx v1)
+
+**Base tables (alphabetical):** `edges`, `files`, `folders`, `meta`, `project_edges`, `project_files`, `projects`, `symbols`.
+
+| Name | Role |
+|------|------|
+| `meta` | Key-value store (e.g. `last_index_ms` after a run). |
+| `folders` | Folder path chain; `files.folder_id` points here. |
+| `files` | One row per indexed source file: `path` (unique), `language`, `size` / `mtime_ns` / `sha256`, optional `content` if index used `--store-content`. |
+| `projects` | MSBuild roots: `name`, `path` (csproj), `kind` (e.g. `csproj`). |
+| `project_files` | Many-to-many: which `file_id` belongs to which `project_id`. |
+| `project_edges` | Project graph: `edge_kind` is `project_reference` (to another project) or `package_reference` (NuGet; `dst_project_id` may be null). `target` holds the path or package id. |
+| `symbols` | `file_id`, `kind`, `name`, `qualified_name`, line/column spans. |
+| `edges` | `src_file_id` always set; `src_symbol_id` / `dst_symbol_id` nullable; `edge_type`, `confidence`, `ref_*` line/col, `meta_json` (JSON string). |
+
+**FTS5 (virtual, not in `sqlite_master` the same way as base tables):** `files_fts` (index: `path`), `symbols_fts` (`name`, `qualified_name`); **`file_contents_fts`** only exists if content was indexed (`--store-content`).
+
+**`edges.edge_type` (C# v1):** `calls` | `implements` | `inherits` | `imports` | optional `string_ref` (with `--index-string-literals`).
+
+**`edges.confidence`:** `exact` | `heuristic` | `unresolved`.
+
+**`symbols.kind` (typical C#):** `type`, `interface`, `enum`, `method`, `constructor`, `property`, `field`, `enum_member`, `delegate`, etc.
+
+**Joins:** `symbols.file_id` → `files.id`; for a reference site, `edges.src_file_id` → `files.id`; `edges.dst_symbol_id` / `src_symbol_id` → `symbols.id`.
 
 ## Empty results — retry before giving up
 
@@ -58,7 +83,7 @@ For **“who uses this type”**, use **`symbols_fts`**, bounded **`LIKE`** on `
 
 ## Workflow
 
-1. **Schema:** If needed, list tables or describe columns, then query.
+1. **Schema:** Use the **Schema reference** above; use **`list_tables` / `describe_table`** only if a column is missing from memory.
 2. **Structured questions:** Prefer **SQL** against core tables:
    - `symbols`, `edges`, `files`, `projects`, `project_edges`
    - FTS: `symbols_fts`, `files_fts` (and `file_contents_fts` if content was indexed)
