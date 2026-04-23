@@ -44,5 +44,7 @@ class LanguageHandler(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def parse_file(self, path: Path, source: bytes) -> ParseResult:
+    def parse_file(
+        self, path: Path, source: bytes, *, index_string_literals: bool = False
+    ) -> ParseResult:
         raise NotImplementedError

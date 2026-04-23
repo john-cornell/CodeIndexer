@@ -4,6 +4,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
 from typing import Sequence
 
@@ -12,7 +13,13 @@ from codeidx.indexer.ignore import build_spec
 from codeidx.indexer.walk import file_fingerprint, iter_files
 from codeidx.languages.base import EdgeRow, LanguageHandler, ParseResult, SymbolRow
 from codeidx.languages.csharp import CSharpHandler
-from codeidx.projects.msbuild import CsprojInfo, parse_csproj, parse_sln
+from codeidx.projects.msbuild import (
+    CsprojInfo,
+    collect_csproj_infos_from_solutions,
+    discover_solution_files,
+    parse_csproj,
+    parse_sln,
+)
 from codeidx.storage import (
     clear_file_index_data,
     ensure_folder_chain,
@@ -113,6 +120,31 @@ def _resolve_symbol_id(
 def _cs_base_short(base: str) -> str:
     b = base.strip().split("<", 1)[0].strip()
     return b.split(".")[-1].strip() if b else ""
+
+
+def _string_ref_literal_eligible(literal: str) -> bool:
+    """Same rules as csharp._literal_looks_like_type_name (Pascal-ish, len>=4)."""
+    if len(literal) < 4:
+        return False
+    if not literal[0].isupper():
+        return False
+    return all(c.isalnum() or c == "_" for c in literal)
+
+
+def _resolve_string_ref_dst(
+    conn: sqlite3.Connection, literal: str
+) -> tuple[int | None, str]:
+    """Only link when exactly one type-like symbol shares this name."""
+    if not _string_ref_literal_eligible(literal):
+        return None, "unresolved"
+    rows = conn.execute(
+        """SELECT id FROM symbols WHERE name = ?
+           AND kind IN ('type', 'interface', 'enum', 'delegate')""",
+        (literal,),
+    ).fetchall()
+    if len(rows) != 1:
+        return None, "unresolved"
+    return int(rows[0][0]), "heuristic"
 
 
 def _cs_interface_name_heuristic(short: str) -> bool:
@@ -358,6 +390,33 @@ def _emit_edges(
                 )
             )
             continue
+        if e.edge_type == "string_ref":
+            lit = (e.dst_qualified_guess or "").strip()
+            dst_id, conf = _resolve_string_ref_dst(conn, lit)
+            if dst_id is None:
+                continue
+            meta = json_dumps(
+                {
+                    **(dict(e.meta) if e.meta else {}),
+                    "string_ref": "unique_type_name_match",
+                }
+            )
+            out.append(
+                (
+                    src_id,
+                    dst_id,
+                    file_id,
+                    None,
+                    "string_ref",
+                    conf,
+                    e.ref_start_line,
+                    e.ref_start_col,
+                    e.ref_end_line,
+                    e.ref_end_col,
+                    meta,
+                )
+            )
+            continue
         dst_id, conf = _resolve_symbol_id(
             conn, resolution_file_ids, None, e.dst_qualified_guess
         )
@@ -387,9 +446,14 @@ def run_index(
     *,
     sln: Path | None = None,
     csproj: list[Path] | None = None,
+    all_solutions: bool = False,
     store_content: bool = False,
     extra_ignore: list[str] | None = None,
     force: bool = False,
+    index_string_literals: bool = False,
+    progress_callback: Callable[[IndexStats], None] | None = None,
+    progress_every: int = 200,
+    progress_time_s: float = 8.0,
 ) -> IndexStats:
     stats = IndexStats()
     t0 = time.perf_counter()
@@ -401,7 +465,11 @@ def run_index(
     spec = build_spec(repo_root, extra_ignore)
 
     csproj_infos: list[CsprojInfo] = []
-    if sln is not None:
+    if all_solutions:
+        sln_paths = discover_solution_files(repo_root)
+        if sln_paths:
+            csproj_infos = collect_csproj_infos_from_solutions(sln_paths)
+    elif sln is not None:
         for _name, cpp in parse_sln(sln.resolve()):
             if cpp.suffix.lower() == ".csproj":
                 csproj_infos.append(parse_csproj(cpp))
@@ -444,84 +512,109 @@ def run_index(
     all_proj_ids = list(proj_id_by_path.values())
 
     exts = {".cs"}
-    for path in iter_files(repo_root, spec, exts):
-        stats.files_scanned += 1
-        rel = str(path.resolve())
-        try:
-            fp = file_fingerprint(path)
-        except OSError as e:
-            stats.errors.append(f"{rel}: {e}")
-            continue
-        stats.bytes_read += fp.size
-        folder_id = ensure_folder_chain(conn, path)
-        prev = get_file_by_path(conn, rel)
+    last_report_t = time.perf_counter()
+    last_report_scanned = 0
+
+    def _maybe_progress() -> None:
+        if progress_callback is None:
+            return
+        nonlocal last_report_t, last_report_scanned
+        now = time.perf_counter()
         if (
-            not force
-            and prev
-            and prev.size == fp.size
-            and prev.mtime_ns == fp.mtime_ns
-            and prev.sha256 == fp.sha256
+            progress_every > 0
+            and stats.files_scanned > 0
+            and stats.files_scanned % progress_every == 0
+        ) or (
+            now - last_report_t >= progress_time_s
+            and stats.files_scanned > last_report_scanned
         ):
-            stats.files_skipped_unchanged += 1
-            continue
+            progress_callback(stats)
+            last_report_t = now
+            last_report_scanned = stats.files_scanned
 
-        h = _handler_for(path, handlers)
-        if not h:
-            continue
-        text = path.read_bytes()
+    for path in iter_files(repo_root, spec, exts):
         try:
-            parsed: ParseResult = h.parse_file(path, text)
-        except Exception as e:
-            stats.errors.append(f"{rel}: parse: {e}")
-            continue
+            stats.files_scanned += 1
+            rel = str(path.resolve())
+            try:
+                fp = file_fingerprint(path)
+            except OSError as e:
+                stats.errors.append(f"{rel}: {e}")
+                continue
+            stats.bytes_read += fp.size
+            folder_id = ensure_folder_chain(conn, path)
+            prev = get_file_by_path(conn, rel)
+            if (
+                not force
+                and prev
+                and prev.size == fp.size
+                and prev.mtime_ns == fp.mtime_ns
+                and prev.sha256 == fp.sha256
+            ):
+                stats.files_skipped_unchanged += 1
+                continue
 
-        content = text.decode("utf-8", errors="replace") if store_content else None
-        file_id = upsert_file(
-            conn,
-            path=rel,
-            folder_id=folder_id,
-            size=fp.size,
-            mtime_ns=fp.mtime_ns,
-            sha256=fp.sha256,
-            language=h.name,
-            content=content,
-            store_content=store_content,
-        )
-        clear_file_index_data(conn, file_id)
+            h = _handler_for(path, handlers)
+            if not h:
+                continue
+            text = path.read_bytes()
+            try:
+                parsed: ParseResult = h.parse_file(
+                    path, text, index_string_literals=index_string_literals
+                )
+            except Exception as e:
+                stats.errors.append(f"{rel}: parse: {e}")
+                continue
 
-        sym_rows = [
-            (
-                s.kind,
-                s.name,
-                s.qualified_name,
-                s.span_start_line,
-                s.span_end_line,
-                s.span_start_col,
-                s.span_end_col,
-                s.ts_node_id,
+            content = text.decode("utf-8", errors="replace") if store_content else None
+            file_id = upsert_file(
+                conn,
+                path=rel,
+                folder_id=folder_id,
+                size=fp.size,
+                mtime_ns=fp.mtime_ns,
+                sha256=fp.sha256,
+                language=h.name,
+                content=content,
+                store_content=store_content,
             )
-            for s in parsed.symbols
-        ]
-        insert_symbols_batch(conn, file_id, sym_rows)
-        stats.symbols_written += len(sym_rows)
+            clear_file_index_data(conn, file_id)
 
-        rows = conn.execute(
-            "SELECT id, qualified_name FROM symbols WHERE file_id = ?",
-            (file_id,),
-        ).fetchall()
-        qname_to_id = {str(r[1]): int(r[0]) for r in rows}
+            sym_rows = [
+                (
+                    s.kind,
+                    s.name,
+                    s.qualified_name,
+                    s.span_start_line,
+                    s.span_end_line,
+                    s.span_start_col,
+                    s.span_end_col,
+                    s.ts_node_id,
+                )
+                for s in parsed.symbols
+            ]
+            insert_symbols_batch(conn, file_id, sym_rows)
+            stats.symbols_written += len(sym_rows)
 
-        pinfo = _pick_project_for_file(path, csproj_infos)
-        if pinfo:
-            pid = proj_id_by_path.get(str(pinfo.path))
-            if pid is not None:
-                link_project_file(conn, pid, file_id)
+            rows = conn.execute(
+                "SELECT id, qualified_name FROM symbols WHERE file_id = ?",
+                (file_id,),
+            ).fetchall()
+            qname_to_id = {str(r[1]): int(r[0]) for r in rows}
 
-        resolution_file_ids = _resolution_file_ids_for_solution(conn, all_proj_ids)
-        ec = _emit_edges(conn, file_id, resolution_file_ids, qname_to_id, parsed.edges)
-        stats.edges_written += ec
-        stats.files_parsed += 1
-        conn.commit()
+            pinfo = _pick_project_for_file(path, csproj_infos)
+            if pinfo:
+                pid = proj_id_by_path.get(str(pinfo.path))
+                if pid is not None:
+                    link_project_file(conn, pid, file_id)
+
+            resolution_file_ids = _resolution_file_ids_for_solution(conn, all_proj_ids)
+            ec = _emit_edges(conn, file_id, resolution_file_ids, qname_to_id, parsed.edges)
+            stats.edges_written += ec
+            stats.files_parsed += 1
+            conn.commit()
+        finally:
+            _maybe_progress()
 
     _repair_unresolved_inheritance_edges(conn)
     conn.commit()

@@ -11,7 +11,7 @@ The Python package name is **`codeidx`**.
 | Capability | Notes |
 |------------|--------|
 | **Symbols** | Types, methods, interfaces, etc., with `qualified_name` and file locations |
-| **Edges** | `calls`, `implements` / `inherits` (C# bases), `imports` (usings) |
+| **Edges** | `calls`, `implements` / `inherits` (C# bases), `imports` (usings); optional `string_ref` (see `--index-string-literals`) |
 | **FTS5** | Symbol and file-path search |
 | **Projects** | `.sln` / `.csproj` graph: project references and package references |
 | **Incremental index** | Skips unchanged files by size, mtime, and SHA-256 |
@@ -60,6 +60,12 @@ python -m codeidx index
 
 ```powershell
 python -m codeidx index --sln "C:\path\to\YourSolution.sln"
+```
+
+- If the tree contains **many** solutions and you want **one** full index with a **merged** project graph (instead of a weaker file-only pass), use **`--all-solutions`** (non-interactive):
+
+```powershell
+python -m codeidx index "C:\path\to\monorepo" --all-solutions --force
 ```
 
 ### 2. Confirm where the database is
@@ -116,13 +122,24 @@ python -m codeidx index [REPO] [options]
 | `--sln PATH` | Solution file for MSBuild project graph and multi-project resolution |
 | `--csproj PATH` | Repeatable; explicit `.csproj` roots (if no `--sln`, one may be chosen interactively) |
 | `--force` | Re-parse **all** `.cs` files even if unchanged (use after upgrading the tool or when you need a full graph refresh) |
-| `--no-sln` | Skip `.sln` / `.csproj` discovery and **any interactive prompt**; index all files under `REPO` without a solution graph (use when many solutions exist or for batch scripts). Incompatible with `--sln` / `--csproj`. |
+| `--all-solutions` | Discover **every** `.sln` under `REPO`, **merge** all referenced projects (de-duplicated) into one MSBuild graph, then index. Use for monorepos with many solutions: stronger cross-project resolution than `--no-sln` and no per-solution loop. Incompatible with `--no-sln`, `--sln`, and `--csproj`. |
+| `--no-sln` | Skip `.sln` / `.csproj` discovery and **any interactive prompt**; index all files under `REPO` without a solution graph (faster, weaker resolution). Incompatible with `--sln` / `--csproj` and with `--all-solutions`. |
+| `--no-progress` | Suppress periodic **stderr** progress lines (default: a line every 200 `.cs` files or every 8 seconds). |
+| `--index-string-literals` | Emit **`string_ref`** edges when a quoted literal uniquely matches a type/interface/enum/delegate **name** (heuristic; see TRADEOFFS). |
 | `--store-content` | Store raw file text for `grep-text` (larger DB) |
 | `--ignore PATTERN` | Extra gitignore-style ignore (repeatable) |
 
 **Incremental behavior:** unchanged files (same size, mtime, hash) are **skipped**. If you see `files_parsed: 0` and expected updates, run with **`--force`** or delete the DB and re-index.
 
 If both **`--sln`** and **`--csproj`** are passed, the solution wins for the project graph (a note is printed).
+
+### Re-indexing and full refresh
+
+- **Update the same DB in place** by default: each run overwrites or refreshes data for **changed** files. You do not need a new database path unless you want a separate index.
+- **Full re-parse (reindex everything):** add **`--force`**. Use after **upgrading `codeidx`**, when the graph looks **stale** after big refactors, or when **incremental** runs skipped files you know changed.
+- **Many `.sln` files under one root** (e.g. a monorepo): use **`--all-solutions --force`** for one merged project graph and a full pass; see [Quick start](#quick-start) above. Avoid bare `index` on a huge tree with many solutions (interactive pick or long stall); use **`--all-solutions`**, a single explicit **`--sln`**, or **`--no-sln`** for file-only (weaker resolution).
+- **Progress:** by default, **`index`** prints periodic lines to **stderr** (every **200** files or **8** seconds). Use **`--no-progress`** for quiet logs (e.g. **CI**).
+- **Confirm:** `python -m codeidx query stats` after a run; expect updated row counts and `meta` such as `last_index_ms` when the write finished.
 
 ---
 

@@ -66,3 +66,24 @@ def discover_solution_files(repo_root: Path) -> list[Path]:
 def discover_csproj_files(repo_root: Path) -> list[Path]:
     return sorted(p for p in repo_root.rglob("*.csproj") if p.is_file())
 
+
+def collect_csproj_infos_from_solutions(sln_paths: list[Path]) -> list[CsprojInfo]:
+    """Load and parse all projects referenced by the given solutions, de-duplicated by .csproj path.
+
+    Used to merge a monorepo with many .sln files into one project graph in a single
+    run_index pass (stronger cross-project resolution than --no-sln or an interactive
+    single-solution pick).
+    """
+    seen: set[str] = set()
+    out: list[CsprojInfo] = []
+    for sp in sln_paths:
+        for _name, cpp in parse_sln(sp.resolve()):
+            if cpp.suffix.lower() != ".csproj":
+                continue
+            key = str(cpp.resolve())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(parse_csproj(cpp))
+    return out
+

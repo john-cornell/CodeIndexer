@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import click
 
 from codeidx.cli import query_cmd
-from codeidx.indexer.pipeline import run_index
+from codeidx.indexer.pipeline import IndexStats, run_index
 from codeidx.paths import default_db_path
 from codeidx.projects.msbuild import discover_csproj_files, discover_solution_files
 
@@ -66,10 +67,28 @@ def main() -> None:
     help="Re-parse every file even when size/mtime/hash match (full refresh).",
 )
 @click.option(
+    "--all-solutions",
+    "all_solutions",
+    is_flag=True,
+    help="Load every .sln under REPO, merge all projects (deduplicated) into one graph, then index (stronger than --no-sln for monorepos). Incompatible with --no-sln, --sln, and --csproj.",
+)
+@click.option(
     "--no-sln",
     "no_sln",
     is_flag=True,
     help="Skip .sln/.csproj discovery and any interactive prompt; index files only (weaker cross-project symbol resolution).",
+)
+@click.option(
+    "--index-string-literals",
+    "index_string_literals",
+    is_flag=True,
+    help="Emit string_ref edges when a quoted literal matches exactly one type/interface/enum/delegate name (heuristic).",
+)
+@click.option(
+    "--no-progress",
+    "no_progress",
+    is_flag=True,
+    help="Do not print periodic progress to stderr (default: show: every 200 .cs files or every 8s).",
 )
 def index_cmd(
     repo: Path | None,
@@ -79,7 +98,10 @@ def index_cmd(
     store_content: bool,
     extra_ignores: tuple[str, ...],
     force: bool,
+    all_solutions: bool,
     no_sln: bool,
+    index_string_literals: bool,
+    no_progress: bool,
 ) -> None:
     """Scan REPO and update DB. If REPO is omitted, uses the current directory."""
     db_resolved = (db_path or default_db_path()).resolve()
@@ -88,6 +110,13 @@ def index_cmd(
     root = (repo or Path(".")).resolve()
     sln_path = sln.resolve() if sln else None
     csproj_list = [p.resolve() for p in csproj] if csproj else None
+    if all_solutions and (no_sln or sln_path is not None or csproj_list):
+        click.echo(
+            "Error: --all-solutions cannot be combined with --no-sln, --sln, or --csproj.",
+            err=True,
+        )
+        sys.exit(2)
+
     if no_sln and (sln_path is not None or csproj_list):
         click.echo("Error: --no-sln cannot be combined with --sln or --csproj.", err=True)
         sys.exit(2)
@@ -101,7 +130,7 @@ def index_cmd(
     if no_sln:
         sln_path = None
         csproj_list = None
-    elif sln_path is None and not csproj_list:
+    elif not all_solutions and sln_path is None and not csproj_list:
         slns = discover_solution_files(root)
         csps = discover_csproj_files(root)
         if len(slns) >= 1:
@@ -110,14 +139,34 @@ def index_cmd(
             chosen = _pick_from_list(csps, ".csproj files")
             csproj_list = [chosen] if chosen else None
 
+    if all_solutions:
+        n = len(discover_solution_files(root))
+        click.echo(f"Merged {n} solution file(s) under {root} (--all-solutions).", err=True)
+
+    progress_t0 = time.perf_counter()
+    if not no_progress:
+        click.echo("Indexing .cs files (progress every 200 files or 8s)…", err=True)
+
+    def _on_progress(s: IndexStats) -> None:
+        elapsed = time.perf_counter() - progress_t0
+        click.echo(
+            f"  ... progress: scanned={s.files_scanned}  parsed={s.files_parsed}  "
+            f"skipped_unchanged={s.files_skipped_unchanged}  errors={len(s.errors)}  "
+            f"elapsed_s={elapsed:.0f}",
+            err=True,
+        )
+
     stats = run_index(
         root,
         db_resolved,
         sln=sln_path,
         csproj=list(csproj_list) if csproj_list else None,
+        all_solutions=all_solutions,
         store_content=store_content,
         extra_ignore=list(extra_ignores) if extra_ignores else None,
         force=force,
+        index_string_literals=index_string_literals,
+        progress_callback=None if no_progress else _on_progress,
     )
     click.echo("Index complete.")
     click.echo(f"  files_scanned:          {stats.files_scanned}")

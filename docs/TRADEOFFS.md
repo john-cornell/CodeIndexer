@@ -46,9 +46,9 @@ External-only or ambiguous bases may remain unresolved; consumers should not tre
 
 ## Type symbols and `find-references`
 
-The CLI’s **`find-references`** (and SQL `WHERE dst_symbol_id = ?` on `edges`) lists **only rows the indexer actually emitted** with that destination symbol. v1 emits **`calls`**, **`inherits` / `implements`** (C# **base list** only), and **`imports`**.
+The CLI’s **`find-references`** (and SQL `WHERE dst_symbol_id = ?` on `edges`) lists **only rows the indexer actually emitted** with that destination symbol. v1 emits **`calls`**, **`inherits` / `implements`** (C# **base list** only), **`imports`**, and optionally **`string_ref`** when **`--index-string-literals`** was used at index time.
 
-**Most uses of a type name are not edges:** generic arguments (`RegisterType<MyEntity>()`), field/property types, `typeof(T)`, attributes, string keys, and DI wiring usually **do not** create an `edges` row pointing at the type’s symbol id. A type symbol can therefore have **zero** incoming edges even when the type is heavily used—this is expected, not a missing “generic inheritance” row.
+**Most uses of a type name are not edges:** generic arguments (`RegisterType<MyEntity>()`), field/property types, `typeof(T)`, attributes, and DI wiring usually **do not** create an `edges` row pointing at the type’s symbol id (except the narrow **`string_ref`** case above). A type symbol can therefore have **zero** incoming edges even when the type is heavily used—this is expected, not a missing “generic inheritance” row.
 
 For **“who references this type”** in the broad sense, combine:
 
@@ -57,6 +57,17 @@ For **“who references this type”** in the broad sense, combine:
 - **`grep-text`** (requires **`--store-content`** when indexing) for text occurrences.
 
 A future indexer could add **`type_ref`**-style edges from type-mention sites; until then, grep/FTS complement the graph.
+
+## String literals (`string_ref`, optional)
+
+When **`--index-string-literals`** is passed to **`index`**, the C# walker records **`string_ref`** candidates from ordinary **`"..."`** literals (not interpolated `$"..."` in v1). A row is **only emitted** when:
+
+- The inner text looks like a **PascalCase-like** identifier (length ≥ 4, first character uppercase, alphanumeric + underscore); and  
+- The index contains **exactly one** symbol with that **`name`** and `kind IN ('type','interface','enum','delegate')`.
+
+Otherwise the candidate is dropped (no unresolved `string_ref` row). This can link e.g. `"MyEntity"` in a string to the `MyEntity` type symbol when the name is unique in the index—**not** a semantic “reference” like Roslyn; duplicates or `enum_member` names are intentionally excluded from the destination filter.
+
+Per file, at most **256** string candidates are considered (budget shared with the walker). **`find-references`** on a type will include **`string_ref`** edges when present.
 
 ## Incremental indexing
 
