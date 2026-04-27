@@ -119,15 +119,31 @@ def clear_file_index_data(conn: sqlite3.Connection, file_id: int) -> None:
 def insert_symbols_batch(
     conn: sqlite3.Connection,
     file_id: int,
-    rows: Sequence[tuple[str, str, str, int, int, int, int, str | None]],
+    rows: Sequence[
+        tuple[
+            str,
+            str,
+            str,
+            str,
+            str,
+            str,
+            str,
+            int,
+            int,
+            int,
+            int,
+            str | None,
+        ]
+    ],
 ) -> list[int]:
-    """rows: kind, name, qualified_name, sl, el, sc, ec, ts_node_id"""
+    """rows: kind, name, qualified_name, namespace, return_type, parameter_types_json, attributes_json, sl, el, sc, ec, ts_node_id"""
     ids: list[int] = []
     for r in rows:
         conn.execute(
             """INSERT INTO symbols(file_id, kind, name, qualified_name,
+               namespace, return_type, parameter_types_json, attributes_json,
                span_start_line, span_end_line, span_start_col, span_end_col, ts_node_id)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (file_id, *r),
         )
         ids.append(int(conn.execute("SELECT last_insert_rowid()").fetchone()[0]))
@@ -213,4 +229,4 @@ def insert_project_edge(
 
 
 def json_dumps(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

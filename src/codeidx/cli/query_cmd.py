@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from codeidx.db.connection import connect
 
@@ -182,3 +183,124 @@ def cmd_grep_text(
                 pass
     conn.close()
     return out
+
+
+def cmd_query_concept(
+    db_path: Path, *, term: str, limit: int
+) -> list[sqlite3.Row]:
+    conn = _open(db_path)
+    rows = conn.execute(
+        """SELECT ct.id, ct.term, ct.score, csg.id AS group_id
+           FROM conceptual_terms ct
+           LEFT JOIN conceptual_synonym_group_terms csgt ON csgt.term_id = ct.id
+           LEFT JOIN conceptual_synonym_groups csg ON csg.id = csgt.group_id
+           WHERE ct.term = ? OR ct.normalized = ?
+           ORDER BY ct.score DESC
+           LIMIT ?""",
+        (term, term.lower(), limit),
+    ).fetchall()
+    conn.close()
+    return rows
+
+
+def cmd_query_component(
+    db_path: Path, *, component_id: int, limit: int
+) -> dict[str, Any]:
+    conn = _open(db_path)
+    c = conn.execute(
+        """SELECT id, key, name, confidence, llm_summary
+           FROM semantic_components WHERE id = ?""",
+        (component_id,),
+    ).fetchone()
+    members = conn.execute(
+        """SELECT s.id, s.kind, s.qualified_name, f.path, s.span_start_line
+           FROM semantic_component_members scm
+           JOIN symbols s ON s.id = scm.symbol_id
+           JOIN files f ON f.id = s.file_id
+           WHERE scm.component_id = ?
+           ORDER BY s.qualified_name
+           LIMIT ?""",
+        (component_id, limit),
+    ).fetchall()
+    caps = conn.execute(
+        """SELECT phrase, confidence FROM semantic_capabilities
+           WHERE component_id = ?
+           ORDER BY confidence DESC, phrase
+           LIMIT ?""",
+        (component_id, limit),
+    ).fetchall()
+    conn.close()
+    return {"component": c, "members": members, "capabilities": caps}
+
+
+def cmd_query_flow(
+    db_path: Path, *, component_id: int | None, group_id: int | None, limit: int
+) -> list[sqlite3.Row]:
+    conn = _open(db_path)
+    if group_id is not None:
+        rows = conn.execute(
+            """SELECT sf.id, sf.entry_symbol_id, sf.path_signature, sf.confidence
+               FROM semantic_flows sf
+               JOIN semantic_flow_steps sfs ON sfs.flow_id = sf.id
+               WHERE sfs.to_component_id IN (
+                 SELECT component_id FROM conceptual_component_links WHERE group_id = ?
+               ) OR sfs.from_component_id IN (
+                 SELECT component_id FROM conceptual_component_links WHERE group_id = ?
+               )
+               GROUP BY sf.id
+               ORDER BY sf.id
+               LIMIT ?""",
+            (group_id, group_id, limit),
+        ).fetchall()
+    elif component_id is not None:
+        rows = conn.execute(
+            """SELECT sf.id, sf.entry_symbol_id, sf.path_signature, sf.confidence
+               FROM semantic_flows sf
+               JOIN semantic_flow_steps sfs ON sfs.flow_id = sf.id
+               WHERE sfs.from_component_id = ? OR sfs.to_component_id = ?
+               GROUP BY sf.id
+               ORDER BY sf.id
+               LIMIT ?""",
+            (component_id, component_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT id, entry_symbol_id, path_signature, confidence
+               FROM semantic_flows
+               ORDER BY id LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    conn.close()
+    return rows
+
+
+def cmd_query_enrichment(
+    db_path: Path,
+    *,
+    table_name: str | None,
+    provider: str | None,
+    limit: int,
+) -> list[sqlite3.Row]:
+    conn = _open(db_path)
+    clauses: list[str] = []
+    params: list[object] = []
+    if table_name:
+        clauses.append("ep.table_name = ?")
+        params.append(table_name)
+    if provider:
+        clauses.append("ep.provider = ?")
+        params.append(provider)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    q = f"""SELECT ep.id, ep.table_name, ep.row_id, ep.field_name,
+                   ep.provider, ep.model_id, ep.prompt_version, ep.created_at,
+                   sc.name AS component_name, sc.llm_summary
+            FROM enrichment_provenance ep
+            LEFT JOIN semantic_components sc
+              ON ep.table_name = 'semantic_components' AND sc.id = ep.row_id
+            {where}
+            ORDER BY ep.id DESC
+            LIMIT ?"""
+    params.append(limit)
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows

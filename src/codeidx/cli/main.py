@@ -7,7 +7,9 @@ from pathlib import Path
 import click
 
 from codeidx.cli import query_cmd
+from codeidx.db.connection import apply_schema, connect
 from codeidx.indexer.pipeline import IndexStats, run_index
+from codeidx.layers import build_conceptual, build_semantic, enrich_with_llm
 from codeidx.paths import default_db_path
 from codeidx.projects.msbuild import discover_csproj_files, discover_solution_files
 
@@ -180,6 +182,68 @@ def index_cmd(
         click.echo(f"  error: {err}", err=True)
 
 
+@main.command("build-semantic")
+@click.option(
+    "--db",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"SQLite database file (default: {default_db_path()})",
+)
+def build_semantic_cmd(db_path: Path | None) -> None:
+    db_resolved = (db_path or default_db_path()).resolve()
+    conn = connect(db_resolved, create=True)
+    apply_schema(conn)
+    result = build_semantic(conn)
+    conn.commit()
+    conn.close()
+    click.echo("Semantic build complete.")
+    click.echo(f"  components_written: {result.rows_written}")
+    click.echo(f"  elapsed_ms:         {result.elapsed_ms:.1f}")
+
+
+@main.command("build-conceptual")
+@click.option(
+    "--db",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"SQLite database file (default: {default_db_path()})",
+)
+def build_conceptual_cmd(db_path: Path | None) -> None:
+    db_resolved = (db_path or default_db_path()).resolve()
+    conn = connect(db_resolved, create=True)
+    apply_schema(conn)
+    result = build_conceptual(conn)
+    conn.commit()
+    conn.close()
+    click.echo("Conceptual build complete.")
+    click.echo(f"  terms_written: {result.rows_written}")
+    click.echo(f"  elapsed_ms:    {result.elapsed_ms:.1f}")
+
+
+@main.command("enrich")
+@click.option(
+    "--db",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"SQLite database file (default: {default_db_path()})",
+)
+@click.option("--provider", default="none", help="none|ollama|cloud")
+@click.option("--model", default="deterministic-placeholder")
+def enrich_cmd(db_path: Path | None, provider: str, model: str) -> None:
+    db_resolved = (db_path or default_db_path()).resolve()
+    conn = connect(db_resolved, create=True)
+    apply_schema(conn)
+    result = enrich_with_llm(conn, provider=provider, model=model)
+    conn.commit()
+    conn.close()
+    click.echo("Enrichment complete.")
+    click.echo(f"  rows_written: {result.rows_written}")
+    click.echo(f"  elapsed_ms:   {result.elapsed_ms:.1f}")
+
+
 @main.group("query")
 @click.option(
     "--db",
@@ -335,6 +399,83 @@ def q_grep_text(
         )
     for path, snip in rows:
         click.echo(f"{path}\t{snip}")
+
+
+@query_group.command("concept")
+@click.option("--term", required=True)
+@click.option("--limit", default=50, type=int)
+@click.pass_context
+def q_concept(ctx: click.Context, term: str, limit: int) -> None:
+    db_path: Path = ctx.obj["db"]
+    rows = query_cmd.cmd_query_concept(db_path, term=term, limit=limit)
+    for r in rows:
+        click.echo(f"{r['id']}\t{r['term']}\tgroup={r['group_id']}\tscore={r['score']}")
+
+
+@query_group.command("component")
+@click.option("--component-id", required=True, type=int)
+@click.option("--limit", default=50, type=int)
+@click.pass_context
+def q_component(ctx: click.Context, component_id: int, limit: int) -> None:
+    db_path: Path = ctx.obj["db"]
+    data = query_cmd.cmd_query_component(db_path, component_id=component_id, limit=limit)
+    c = data["component"]
+    if c is None:
+        click.echo("Component not found.", err=True)
+        sys.exit(2)
+    click.echo(f"component: {c['id']} {c['name']} ({c['key']}) confidence={c['confidence']}")
+    if c["llm_summary"]:
+        click.echo(f"summary: {c['llm_summary']}")
+    click.echo("capabilities:")
+    for row in data["capabilities"]:
+        click.echo(f"  - {row['phrase']} ({row['confidence']:.2f})")
+    click.echo("members:")
+    for row in data["members"]:
+        click.echo(f"  - {row['qualified_name']} [{row['kind']}] {row['path']}:{row['span_start_line']}")
+
+
+@query_group.command("flow")
+@click.option("--component-id", default=None, type=int)
+@click.option("--group-id", default=None, type=int)
+@click.option("--limit", default=50, type=int)
+@click.pass_context
+def q_flow(
+    ctx: click.Context, component_id: int | None, group_id: int | None, limit: int
+) -> None:
+    db_path: Path = ctx.obj["db"]
+    rows = query_cmd.cmd_query_flow(
+        db_path, component_id=component_id, group_id=group_id, limit=limit
+    )
+    for r in rows:
+        click.echo(
+            f"{r['id']}\tentry={r['entry_symbol_id']}\tpath={r['path_signature']}\tconfidence={r['confidence']}"
+        )
+
+
+@query_group.command("enrichment")
+@click.option("--table", "table_name", default=None, help="Filter by table name.")
+@click.option("--provider", default=None, help="Filter by provider.")
+@click.option("--limit", default=50, type=int)
+@click.pass_context
+def q_enrichment(
+    ctx: click.Context, table_name: str | None, provider: str | None, limit: int
+) -> None:
+    db_path: Path = ctx.obj["db"]
+    rows = query_cmd.cmd_query_enrichment(
+        db_path, table_name=table_name, provider=provider, limit=limit
+    )
+    if not rows:
+        click.echo("No enrichment rows found.")
+        return
+    for r in rows:
+        base = (
+            f"{r['id']}\t{r['table_name']}#{r['row_id']}\t{r['field_name']}\t"
+            f"{r['provider']}/{r['model_id']}\t{r['created_at']}"
+        )
+        click.echo(base)
+        if r["component_name"] and r["llm_summary"]:
+            click.echo(f"  component: {r['component_name']}")
+            click.echo(f"  summary: {r['llm_summary']}")
 
 
 if __name__ == "__main__":
