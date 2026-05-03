@@ -20,7 +20,6 @@ from codeidx.projects.msbuild import (
     parse_csproj,
     parse_sln,
 )
-from codeidx.layers import index_version_bump
 from codeidx.storage import (
     clear_file_index_data,
     ensure_folder_chain,
@@ -461,7 +460,6 @@ def run_index(
     repo_root = repo_root.resolve()
     conn = connect(db_path)
     apply_schema(conn)
-    index_version_bump(conn)
 
     handlers = _handlers()
     spec = build_spec(repo_root, extra_ignore)
@@ -537,7 +535,7 @@ def run_index(
     for path in iter_files(repo_root, spec, exts):
         try:
             stats.files_scanned += 1
-            rel = str(path.resolve().as_posix())
+            rel = str(path.resolve())
             try:
                 fp = file_fingerprint(path)
             except OSError as e:
@@ -587,10 +585,6 @@ def run_index(
                     s.kind,
                     s.name,
                     s.qualified_name,
-                    s.namespace or "",
-                    s.return_type or "",
-                    json_dumps(s.parameter_types or []),
-                    json_dumps(s.attributes or []),
                     s.span_start_line,
                     s.span_end_line,
                     s.span_start_col,

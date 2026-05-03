@@ -15,11 +15,6 @@ class SymbolRow:
     span_start_col: int
     span_end_col: int
     ts_node_id: str | None = None
-    namespace: str | None = None
-    project_hint: str | None = None
-    return_type: str | None = None
-    parameter_types: list[str] = field(default_factory=list)
-    attributes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -33,8 +28,6 @@ class EdgeRow:
     ref_end_line: int
     ref_end_col: int
     meta: dict | None = None
-    src_kind: str | None = None
-    dst_kind_hint: str | None = None
 
 
 @dataclass
