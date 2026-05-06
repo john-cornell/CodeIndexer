@@ -6,7 +6,8 @@ from pathlib import Path
 
 import click
 
-from codeidx.cli import query_cmd
+from codeidx import notes
+from codeidx.cli import obsidian, query_cmd
 from codeidx.indexer.pipeline import IndexStats, run_index
 from codeidx.paths import default_db_path
 from codeidx.projects.msbuild import discover_csproj_files, discover_solution_files
@@ -335,6 +336,212 @@ def q_grep_text(
         )
     for path, snip in rows:
         click.echo(f"{path}\t{snip}")
+
+
+@query_group.command("obsidian")
+@click.option(
+    "--out-dir",
+    type=click.Path(path_type=Path),
+    default=Path(".codeidx/vault"),
+    show_default=True,
+    help="Directory where Obsidian markdown files are written.",
+)
+@click.pass_context
+def q_obsidian(ctx: click.Context, out_dir: Path) -> None:
+    db_path: Path = ctx.obj["db"]
+    out = out_dir.resolve()
+    count = obsidian.generate_vault(db_path, out)
+    click.echo(f"Generated {count} Obsidian notes in {out}")
+
+
+@main.group("notes")
+@click.option(
+    "--notes-dir",
+    type=click.Path(path_type=Path),
+    default=Path(".codeidx/notes"),
+    show_default=True,
+    help="Directory for markdown symbol notes.",
+)
+@click.pass_context
+def notes_group(ctx: click.Context, notes_dir: Path) -> None:
+    ctx.ensure_object(dict)
+    ctx.obj["notes_dir"] = notes_dir.resolve()
+
+
+@notes_group.command("get-or-create")
+@click.argument("symbol_name")
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=None)
+@click.pass_context
+def notes_get_or_create(
+    ctx: click.Context, symbol_name: str, db_path: Path | None
+) -> None:
+    notes_dir: Path = ctx.obj["notes_dir"]
+    db_resolved = db_path.resolve() if db_path else None
+    note_path = notes.get_or_create_note(symbol_name, notes_dir=notes_dir, db_path=db_resolved)
+    click.echo(str(note_path))
+
+
+@notes_group.command("update")
+@click.argument("symbol_name")
+@click.argument("content")
+@click.pass_context
+def notes_update(ctx: click.Context, symbol_name: str, content: str) -> None:
+    notes_dir: Path = ctx.obj["notes_dir"]
+    note_path = notes.update_note(symbol_name, content, notes_dir=notes_dir)
+    click.echo(str(note_path))
+
+
+@notes_group.command("sync")
+@click.argument("symbol_name")
+@click.option("--db", "db_path", type=click.Path(path_type=Path), required=True)
+@click.pass_context
+def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path) -> None:
+    notes_dir: Path = ctx.obj["notes_dir"]
+    db_resolved = db_path.resolve()
+    note_path = notes.sync_note_structure(symbol_name, notes_dir=notes_dir, db_path=db_resolved)
+    click.echo(str(note_path))
+
+
+@main.command("scan-obsidian")
+@click.argument(
+    "repo",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=False,
+)
+@click.option(
+    "--db",
+    "db_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"SQLite database file (default: {default_db_path()})",
+)
+@click.option("--sln", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None)
+@click.option(
+    "--csproj",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Repeatable. Explicit csproj roots to associate.",
+)
+@click.option(
+    "--all-solutions",
+    "all_solutions",
+    is_flag=True,
+    help="Load every .sln under REPO and merge all projects into one graph.",
+)
+@click.option(
+    "--no-sln",
+    "no_sln",
+    is_flag=True,
+    help="Skip .sln/.csproj discovery and any prompt; index files only.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-parse every file even when unchanged (full refresh).",
+)
+@click.option(
+    "--index-string-literals",
+    "index_string_literals",
+    is_flag=True,
+    help="Emit string_ref edges for unique type-like string literals.",
+)
+@click.option(
+    "--no-progress",
+    "no_progress",
+    is_flag=True,
+    help="Do not print periodic progress lines while indexing.",
+)
+@click.option(
+    "--out-dir",
+    type=click.Path(path_type=Path),
+    default=Path(".codeidx/vault"),
+    show_default=True,
+    help="Directory where Obsidian markdown files are written.",
+)
+def scan_obsidian_cmd(
+    repo: Path | None,
+    db_path: Path | None,
+    sln: Path | None,
+    csproj: tuple[Path, ...],
+    all_solutions: bool,
+    no_sln: bool,
+    force: bool,
+    index_string_literals: bool,
+    no_progress: bool,
+    out_dir: Path,
+) -> None:
+    """Index and export Obsidian vault in one command."""
+    db_resolved = (db_path or default_db_path()).resolve()
+    root = (repo or Path(".")).resolve()
+    sln_path = sln.resolve() if sln else None
+    csproj_list = [p.resolve() for p in csproj] if csproj else None
+    if all_solutions and (no_sln or sln_path is not None or csproj_list):
+        click.echo(
+            "Error: --all-solutions cannot be combined with --no-sln, --sln, or --csproj.",
+            err=True,
+        )
+        sys.exit(2)
+    if no_sln and (sln_path is not None or csproj_list):
+        click.echo("Error: --no-sln cannot be combined with --sln or --csproj.", err=True)
+        sys.exit(2)
+    if sln_path is not None and csproj_list:
+        click.echo(
+            "Note: --sln is set; explicit --csproj entries are ignored for project graph.",
+            err=True,
+        )
+    if no_sln:
+        sln_path = None
+        csproj_list = None
+    elif not all_solutions and sln_path is None and not csproj_list:
+        slns = discover_solution_files(root)
+        csps = discover_csproj_files(root)
+        if len(slns) >= 1:
+            sln_path = _pick_from_list(slns, ".sln files")
+        elif len(csps) >= 1:
+            chosen = _pick_from_list(csps, ".csproj files")
+            csproj_list = [chosen] if chosen else None
+    if all_solutions:
+        n = len(discover_solution_files(root))
+        click.echo(f"Merged {n} solution file(s) under {root} (--all-solutions).", err=True)
+    progress_t0 = time.perf_counter()
+    if not no_progress:
+        click.echo("Indexing .cs files (progress every 200 files or 8s)...", err=True)
+
+    def _on_progress(s: IndexStats) -> None:
+        elapsed = time.perf_counter() - progress_t0
+        click.echo(
+            f"  ... progress: scanned={s.files_scanned}  parsed={s.files_parsed}  "
+            f"skipped_unchanged={s.files_skipped_unchanged}  errors={len(s.errors)}  "
+            f"elapsed_s={elapsed:.0f}",
+            err=True,
+        )
+
+    stats = run_index(
+        root,
+        db_resolved,
+        sln=sln_path,
+        csproj=list(csproj_list) if csproj_list else None,
+        all_solutions=all_solutions,
+        store_content=False,
+        extra_ignore=None,
+        force=force,
+        index_string_literals=index_string_literals,
+        progress_callback=None if no_progress else _on_progress,
+    )
+    click.echo("Index complete.")
+    click.echo(f"  files_scanned:          {stats.files_scanned}")
+    click.echo(f"  files_skipped_unchanged:{stats.files_skipped_unchanged}")
+    click.echo(f"  files_parsed:           {stats.files_parsed}")
+    click.echo(f"  symbols_written:        {stats.symbols_written}")
+    click.echo(f"  edges_written:          {stats.edges_written}")
+    click.echo(f"  bytes_read:             {stats.bytes_read}")
+    click.echo(f"  elapsed_ms:             {stats.elapsed_ms:.1f}")
+    for err in stats.errors:
+        click.echo(f"  error: {err}", err=True)
+
+    out = out_dir.resolve()
+    count = obsidian.generate_vault(db_resolved, out)
+    click.echo(f"Generated {count} Obsidian notes in {out}")
 
 
 if __name__ == "__main__":

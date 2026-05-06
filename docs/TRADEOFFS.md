@@ -46,7 +46,7 @@ External-only or ambiguous bases may remain unresolved; consumers should not tre
 
 ## Type symbols and `find-references`
 
-The CLI’s **`find-references`** (and SQL `WHERE dst_symbol_id = ?` on `edges`) lists **only rows the indexer actually emitted** with that destination symbol. v1 emits **`calls`**, **`inherits` / `implements`** (C# **base list** only), **`imports`**, and optionally **`string_ref`** when **`--index-string-literals`** was used at index time.
+The CLI’s **`find-references`** (and SQL `WHERE dst_symbol_id = ?` on `edges`) lists **only rows the indexer actually emitted** with that destination symbol. v1 emits **`calls`**, **`injects`** (constructor parameter type edges), **`inherits` / `implements`** (C# **base list** only), **`imports`**, and optionally **`string_ref`** when **`--index-string-literals`** was used at index time.
 
 **Most uses of a type name are not edges:** generic arguments (`RegisterType<MyEntity>()`), field/property types, `typeof(T)`, attributes, and DI wiring usually **do not** create an `edges` row pointing at the type’s symbol id (except the narrow **`string_ref`** case above). A type symbol can therefore have **zero** incoming edges even when the type is heavily used—this is expected, not a missing “generic inheritance” row.
 
@@ -56,7 +56,18 @@ For **“who references this type”** in the broad sense, combine:
 - **`query find-symbol`** with a substring or path filter;
 - **`grep-text`** (requires **`--store-content`** when indexing) for text occurrences.
 
-A future indexer could add **`type_ref`**-style edges from type-mention sites; until then, grep/FTS complement the graph.
+A future indexer could add broader **`type_ref`**-style edges from more type-mention sites; until then, grep/FTS complement the graph.
+
+## Constructor injection edges (`injects`)
+
+When parsing C# constructors, the indexer emits `edge_type = 'injects'` from the enclosing class symbol to each constructor parameter type.
+
+- `src_symbol_id`: class symbol id (when class symbol resolves in the same file pass).
+- `dst_symbol_id`: resolved parameter type symbol id when available in indexed scope.
+- `confidence`: `exact` / `heuristic` / `unresolved`, using the same symbol lookup model as other non-import edge types.
+- `meta_json`: includes `parameter_name` and `parameter_index`.
+
+This is syntactic constructor-parameter extraction, not a semantic DI container model (it does not prove runtime registration/lifetime or service activation path).
 
 ## String literals (`string_ref`, optional)
 

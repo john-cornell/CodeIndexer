@@ -36,7 +36,7 @@ Use the **MCP tools** the server exposes (e.g. `read_query`, `list_tables`, sche
 
 **FTS5 (virtual, not in `sqlite_master` the same way as base tables):** `files_fts` (index: `path`), `symbols_fts` (`name`, `qualified_name`); **`file_contents_fts`** only exists if content was indexed (`--store-content`).
 
-**`edges.edge_type` (C# v1):** `calls` | `implements` | `inherits` | `imports` | optional `string_ref` (with `--index-string-literals`).
+**`edges.edge_type` (C# v1):** `calls` | `injects` | `implements` | `inherits` | `imports` | optional `string_ref` (with `--index-string-literals`).
 
 **`edges.confidence`:** `exact` | `heuristic` | `unresolved`.
 
@@ -70,7 +70,7 @@ Stay bounded; iterate terms before falling back to wide repo grep or bulk file r
 
 ## Type symbols and incoming edges
 
-**A type symbol often has no rows** where `dst_symbol_id = <that id>` (and none where `src_symbol_id = <that id>` except its own declaration edges). The index does **not** model every **mention** of a type (generic arguments, field types, `RegisterType<T>()`, DI, etc.)—only **`calls`**, **base-list** `inherits`/`implements`, **`imports`**, and (optionally) **`string_ref`**.
+**A type symbol often has no rows** where `dst_symbol_id = <that id>` (and none where `src_symbol_id = <that id>` except its own declaration edges). The index does **not** model every **mention** of a type (generic arguments, field types, `RegisterType<T>()`, DI, etc.)—only **`calls`**, constructor **`injects`**, base-list **`inherits`**/**`implements`**, **`imports`**, and (optionally) **`string_ref`**.
 
 For **“who uses this type”**, use **`symbols_fts`**, bounded **`LIKE`** on `name`/`qualified_name`, path filters, and **`grep-text`** if content was indexed. Monorepos with **many** `.sln` files: use **`python -m codeidx index <root> --all-solutions`** to merge all solutions’ projects in **one** graph (stronger than **`--no-sln`**; avoids interactive single-sln pick). If the index was built with **`--index-string-literals`**, **`find-references`** may also list **`string_ref`** rows (quoted name ↔ unique type-like symbol—**heuristic, not Roslyn**). Do not treat empty **`find-references`** as proof the type is unused.
 
@@ -87,7 +87,7 @@ For **“who uses this type”**, use **`symbols_fts`**, bounded **`LIKE`** on `
 2. **Structured questions:** Prefer **SQL** against core tables:
    - `symbols`, `edges`, `files`, `projects`, `project_edges`
    - FTS: `symbols_fts`, `files_fts` (and `file_contents_fts` if content was indexed)
-3. **Edge types** include `calls`, `inherits`, `implements`, `imports`, and optionally **`string_ref`** (when indexing used `--index-string-literals`): a quoted string whose text uniquely matches a **type-like** symbol name—low semantic precision, not Roslyn references. `confidence` is `exact`, `heuristic`, or `unresolved`. Call resolution is mostly syntactic—treat **non-exact** confidence as exploratory, not proof of the resolved target.
+3. **Edge types** include `calls`, `injects`, `inherits`, `implements`, `imports`, and optionally **`string_ref`** (when indexing used `--index-string-literals`): a quoted string whose text uniquely matches a **type-like** symbol name—low semantic precision, not Roslyn references. `confidence` is `exact`, `heuristic`, or `unresolved`. Resolution is mostly syntactic—treat **non-exact** confidence as exploratory, not proof of the resolved target.
 4. For **callers** / **callees**, join `edges` (`edge_type = 'calls'`) with `symbols` and `files`. Qualify column names (`symbols.id`, `files.id`) when joining both tables.
 5. **Interface implementers:** for interface symbol id `I`, query edges with `dst_symbol_id = I` and `symbols.kind = 'interface'`; include `edge_type IN ('implements','inherits')` only for legacy DBs. Prefer **`implements`** for C# interface implementation; **`inherits`** here means a resolved **class/struct** base (first in list), not “interface inheritance.” Use `edges.meta_json` (`base_resolved`, `dst_kind`, `base_kind_hint`) when `dst_symbol_id` is null. Indexing with a **solution** (`--sln`) resolves types across project references when the interface is in the same index.
 

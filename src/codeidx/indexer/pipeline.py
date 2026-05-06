@@ -390,6 +390,26 @@ def _emit_edges(
                 )
             )
             continue
+        if e.edge_type == "injects":
+            dst_id, conf = _resolve_symbol_id(
+                conn, resolution_file_ids, None, e.dst_qualified_guess
+            )
+            out.append(
+                (
+                    src_id,
+                    dst_id,
+                    file_id,
+                    None,
+                    "injects",
+                    conf,
+                    e.ref_start_line,
+                    e.ref_start_col,
+                    e.ref_end_line,
+                    e.ref_end_col,
+                    meta,
+                )
+            )
+            continue
         if e.edge_type == "string_ref":
             lit = (e.dst_qualified_guess or "").strip()
             dst_id, conf = _resolve_string_ref_dst(conn, lit)

@@ -11,7 +11,7 @@ The Python package name is **`codeidx`**.
 | Capability | Notes |
 |------------|--------|
 | **Symbols** | Types, methods, interfaces, etc., with `qualified_name` and file locations |
-| **Edges** | `calls`, `implements` / `inherits` (C# bases), `imports` (usings); optional `string_ref` (see `--index-string-literals`) |
+| **Edges** | `calls`, `injects`, `implements` / `inherits` (C# bases), `imports` (usings); optional `string_ref` (see `--index-string-literals`) |
 | **FTS5** | Symbol and file-path search |
 | **Projects** | `.sln` / `.csproj` graph: project references and package references |
 | **Incremental index** | Skips unchanged files by size, mtime, and SHA-256 |
@@ -86,6 +86,9 @@ On Windows, prefer **`python -m codeidx query …`** rather than assuming `sqlit
 python -m codeidx query find-symbol --name MyType
 python -m codeidx query implementations-of --symbol-id 42
 python -m codeidx query callers-of --symbol-id 99
+python -m codeidx query obsidian --out-dir .codeidx/vault
+python -m codeidx notes get-or-create My.Namespace.Service
+python -m codeidx scan-obsidian --out-dir .codeidx/vault
 ```
 
 ---
@@ -156,6 +159,42 @@ All use the same default DB as **`index`** unless **`--db`** is set.
 | `implementations-of` | Types implementing an **interface** symbol id |
 | `path-search` | Files whose path contains a substring |
 | `grep-text` | Substring or `--regex` over stored content (needs `--store-content` when indexing) |
+| `obsidian` | Generate Obsidian markdown vault from indexed symbols/edges |
+
+## `notes` subcommands
+
+Persistent symbol notes live in `.codeidx/notes` by default, with a protected `## Notes` section.
+
+| Subcommand | Purpose |
+|------------|--------|
+| `get-or-create` | Create or return note for `symbol_name`, with DB-derived structure section |
+| `update` | Replace note content for `symbol_name` |
+| `sync` | Rebuild structural top half from DB and preserve the `## Notes` section |
+
+Examples:
+
+```bash
+python -m codeidx notes get-or-create My.Namespace.Worker
+python -m codeidx notes sync My.Namespace.Worker --db ./my-index.db
+python -m codeidx notes update My.Namespace.Worker "# Manual note content"
+```
+
+## Obsidian export
+
+`query obsidian` creates one markdown file per indexed type-like symbol (`type`, `interface`, `enum`, `delegate`) under the output directory, nested by namespace path.
+
+Generated pages include wiki-links for:
+
+- inheritance (`inherits` / `implements`)
+- constructor dependencies (`injects`)
+- methods
+- called methods (`calls`)
+
+For a one-shot flow (scan + export), use:
+
+```bash
+python -m codeidx scan-obsidian --out-dir .codeidx/vault
+```
 
 **`find-references` vs “every use of this type”:** The index only records certain relationships (calls, inheritance bases, usings). Types used in generics, DI registration, field types, etc. often have **no** incoming graph edges—use partial **`find-symbol`**, **`symbols_fts` / `LIKE`**, or **`grep-text`** for that. Details: [docs/TRADEOFFS.md](docs/TRADEOFFS.md#type-symbols-and-find-references).
 

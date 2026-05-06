@@ -265,6 +265,7 @@ def _walk_node(
     if t == "constructor_declaration":
         name_node = _find_field(node, "name")
         nm = _type_name_from_node(src, name_node)
+        enclosing_type_q = scope.qualified_prefix().strip(".")
         sc2 = scope.clone()
         q = (sc2.qualified_prefix() + ("." + nm if nm else "")).strip(".")
         sl, el, sc, ec = _span_1based(node)
@@ -280,6 +281,33 @@ def _walk_node(
                 ts_node_id=str(node.id),
             )
         )
+        params = _find_field(node, "parameters")
+        if params is not None and enclosing_type_q:
+            param_idx = 0
+            for child in params.children:
+                if child.type != "parameter":
+                    continue
+                type_node = _find_field(child, "type")
+                dst = _type_name_from_node(src, type_node).strip()
+                if not dst:
+                    continue
+                name_node = _find_field(child, "name")
+                pname = _type_name_from_node(src, name_node).strip() or None
+                psl, pel, psc, pec = _span_1based(child)
+                pr.edges.append(
+                    EdgeRow(
+                        src_symbol_name=enclosing_type_q,
+                        dst_qualified_guess=dst,
+                        edge_type="injects",
+                        confidence="heuristic",
+                        ref_start_line=psl,
+                        ref_start_col=psc,
+                        ref_end_line=pel,
+                        ref_end_col=pec,
+                        meta={"parameter_name": pname, "parameter_index": param_idx},
+                    )
+                )
+                param_idx += 1
         body = _find_field(node, "body")
         if body:
             _collect_invocations(body, src, sc2, pr, q, str_budget)
