@@ -1,0 +1,137 @@
+# Agents, hooks, and `init-agents`
+
+This document describes how **codeidx** integrates with **Cursor** and **Claude Code**, what **`codeidx init-agents`** does, and how to run it on **Windows** and **WSL**.
+
+## Quick start
+
+From the **root of the project you want to configure** (e.g. your app repo, not necessarily this indexer repo):
+
+```bash
+codeidx init-agents /path/to/your/repo --db /path/to/codeidx.db
+```
+
+Omit the repo argument only if your **current working directory** is already that root:
+
+```bash
+cd /path/to/your/repo
+codeidx init-agents
+```
+
+Then:
+
+- **Cursor:** restart the IDE after `.cursor/mcp.json` changes.
+- **Claude Code:** new sessions pick up `.claude/settings.local.json`; use `/hooks` in Claude Code to inspect merged hooks.
+
+## What `init-agents` does
+
+### CLI overview
+
+| Option | Purpose |
+|--------|---------|
+| `[REPO]` | Project root to receive files. Default: current directory (`.`). |
+| `--db PATH` | SQLite DB used in MCP config and in Claude **SessionStart** hook. Default: OS-specific (see below). |
+| `--agent cursor\|claude\|all` | Repeatable; default `all`. |
+| `--mcp-name NAME` | Cursor MCP server key in `mcp.json`. Default: `codeidx`. |
+| `--dry-run` | Print planned actions; do not write files. |
+| `--force` | Overwrite Cursor skill + `schema.sql` even if unchanged. |
+| `--force-mcp` | Replace existing `mcp.json` entry when it differs (same `--mcp-name`). |
+
+### Cursor (`--agent cursor` or `all`)
+
+Writes under **`REPO/.cursor/`**:
+
+1. **`skills/codeidx/SKILL.md`** — bundled agent skill (schema reference points at `./schema.sql` next to it).
+2. **`skills/codeidx/schema.sql`** — copy of the indexer schema for offline reference.
+3. **`mcp.json`** — merges an **`mcpServers`** entry (default name `codeidx`) that runs:
+
+   `python -m codeidx mcp --db <resolved --db>`
+
+   (or the `codeidx` executable from your install, depending on environment).
+
+**Not configured by `init-agents`:** Cursor’s native **`.cursor/hooks.json`** (different product feature). This command sets up **MCP + skill**, not Cursor hook scripts.
+
+### Claude Code (`--agent claude` or `all`)
+
+Merges **`REPO/.claude/settings.local.json`** (creates it if missing). Adds **idempotent** hook groups (skips if the same logical hook is already present).
+
+Also merges a short **codeidx** section into **`REPO/CLAUDE.md`** (between HTML comment markers) so **Claude Code** sessions (including `/resume`) load hook and notes facts from the project root — not only from searching `~/.claude`.
+
+| Event | Matcher / filter | Command |
+|-------|------------------|---------|
+| **PreToolUse** | `Grep\|Glob` | `codeidx hook pre-grep-glob` (or `python -m codeidx …` if no `codeidx` on `PATH`) |
+| **PostToolUse** | `Edit\|Write` with **`if`:** `Edit(*.cs)\|Write(*.cs)` | `codeidx hook post-cs-edit` |
+| **SessionStart** | `startup\|resume\|clear\|compact` | `codeidx hook session-start --db … --repo …` |
+
+**SessionStart** compares the DB file mtime to **`git log -1`** in **`--repo`**; if the index looks older than the last commit, it injects a reminder to re-index. If the DB file is missing, it injects a “run `codeidx index`” style message.
+
+**Upgrade behavior:** If `codeidx` is on `PATH` but an existing hook still uses **`python … -m codeidx hook`**, the next `init-agents` run **rewrites** that command to the **`codeidx`** shim (helps **pipx** / WSL where system `python3` might be a different/old install).
+
+### Global vs project (Claude Code)
+
+- **User/global:** e.g. `~/.claude/settings.json` — applies everywhere.
+- **Project:** `REPO/.claude/settings.local.json` — applies when the project is loaded.
+
+Both apply together. Your global **PreToolUse** hooks (e.g. a Bash rewriter) and project **codeidx** hooks can all run; they are not mutually exclusive.
+
+## Default database path (`--db` omitted)
+
+Resolved relative to the **repository root** (the path you pass to **`init-agents`**, or the current directory for CLI defaults):
+
+| Context | Default file |
+|---------|----------------|
+| **Index / query / MCP** | `<repo>/.codeidx/db/codeidx.db` |
+
+There is **no** global per-user default. Use **`--db PATH`** everywhere if you store the SQLite file elsewhere.
+
+**WSL:** A repo on **`C:\...`** is the same tree as **`/mnt/c/...`**. Run **`init-agents`** and **`index`** in the environment whose paths you want embedded (Windows vs WSL); use the same resolved **`--db`** if you override the default.
+
+## Windows vs WSL vs “same repo”
+
+- Repos on **`C:\...`** are the same files as **`/mnt/c/...`** in WSL. One `init-agents` run updates that tree; both environments see the same `.cursor` and `.claude` files.
+- **`codeidx` must be installed per environment** (Windows Python vs WSL pipx/venv are separate).
+- Hook commands embed **`--db`** and **`--repo`** as resolved when you ran **`init-agents`**. If you only use **WSL** Claude against that repo, run **`init-agents` in WSL** with **`/mnt/c/...`** paths so subprocesses and git see consistent paths.
+
+## Supporting commands
+
+### `codeidx mcp`
+
+Stdio MCP server: read-only SQLite access (e.g. `read_query`, `list_tables`, `describe_table`). Cursor should point MCP at this server and the same **`--db`** you index.
+
+### `codeidx hook …`
+
+Used only as **Claude Code** command hooks; stdin is hook JSON, stdout is hook result JSON.
+
+- **`pre-grep-glob`** — nudge toward codeidx / FTS before heavy Grep/Glob.
+- **`post-cs-edit`** — reminder about knowledge notes after C# edits.
+- **`session-start`** — staleness / missing DB messaging; requires **`--db`** and **`--repo`**.
+
+## Common messages from `init-agents`
+
+| Message | Meaning |
+|---------|---------|
+| **Unchanged … SKILL.md / schema.sql** | Content matches bundled template; use **`--force`** to overwrite. |
+| **Skipped MCP server … use --force-mcp** | `mcp.json` already has that server name with a **different** definition. |
+| **Hook already present** | Idempotent skip (or marker matched). |
+| **Refreshed hook …** | Old `python -m codeidx hook` upgraded to `codeidx` on `PATH`. |
+
+## Install notes (especially WSL)
+
+- **PEP 668** (externally managed Python): use a **venv** or **pipx** instead of `pip install --global` on Debian/Ubuntu.
+- **`codeidx --help`** should list **`init-agents`**, **`mcp`**, and **`hook`**. If **`python3 -m codeidx`** shows only **`index`** / **`query`**, that interpreter has an **old** `codeidx`; use **`which codeidx`** (pipx) or fix the install.
+- After **pipx** issues, ensure **`~/.local/bin/codeidx`** is a valid shim (`pipx reinstall codeidx`).
+
+## Verifying in Claude Code
+
+- Run **`/hooks`** in the Claude Code UI to see merged hooks and their source files.
+- Project file: **`REPO/.claude/settings.local.json`**.
+
+## Related repo paths
+
+| Path | Role |
+|------|------|
+| `src/codeidx/cli/init_agents_cmd.py` | `init-agents` Click command |
+| `src/codeidx/agents/cursor_setup.py` | Cursor skill + `mcp.json` merge |
+| `src/codeidx/agents/claude_setup.py` | Claude `settings.local.json` merge + hook command building |
+| `src/codeidx/cli/hook_cmd.py` | `codeidx hook` implementations |
+| `src/codeidx/cli/mcp_cmd.py` | `codeidx mcp` entry |
+| `src/codeidx/agents/bundled/cursor/SKILL.md` | Bundled Cursor skill source |

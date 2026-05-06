@@ -488,15 +488,29 @@ def run_index(
     if all_solutions:
         sln_paths = discover_solution_files(repo_root)
         if sln_paths:
-            csproj_infos = collect_csproj_infos_from_solutions(sln_paths)
+            csproj_infos = collect_csproj_infos_from_solutions(
+                sln_paths, missing_csproj=stats.errors
+            )
     elif sln is not None:
         for _name, cpp in parse_sln(sln.resolve()):
-            if cpp.suffix.lower() == ".csproj":
-                csproj_infos.append(parse_csproj(cpp))
+            if cpp.suffix.lower() != ".csproj":
+                continue
+            cpp = cpp.resolve()
+            if not cpp.is_file():
+                stats.errors.append(
+                    f"solution {sln.name} lists missing .csproj: {cpp}"
+                )
+                continue
+            csproj_infos.append(parse_csproj(cpp))
     elif csproj:
         for cpp in csproj:
-            if cpp.suffix.lower() == ".csproj":
-                csproj_infos.append(parse_csproj(cpp.resolve()))
+            if cpp.suffix.lower() != ".csproj":
+                continue
+            r = cpp.resolve()
+            if not r.is_file():
+                stats.errors.append(f"--csproj missing file: {r}")
+                continue
+            csproj_infos.append(parse_csproj(r))
 
     proj_id_by_path: dict[str, int] = {}
     for info in csproj_infos:

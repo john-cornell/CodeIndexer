@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codeidx"
-version = "0.2.4"
+version = "0.3.0"
 description = "SQLite codebase intelligence indexer with FTS5 and graph edges"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.1",
+    "mcp>=1.0",
     "pathspec>=0.12",
     "tree-sitter>=0.21.0,<0.23",
     "tree-sitter-languages>=1.8.0",
@@ -27,7 +28,7 @@ codeidx = "codeidx.cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-codeidx = ["db/schema.sql"]
+codeidx = ["db/schema.sql", "agents/bundled/cursor/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

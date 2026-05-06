@@ -4,8 +4,8 @@ import re
 from pathlib import Path
 
 from codeidx.db.connection import connect
+from codeidx.paths import repo_notes_dir
 
-NOTES_DIR = Path(".codeidx/notes")
 NOTES_HEADER = "## Notes"
 
 
@@ -40,7 +40,8 @@ def _collect_symbol_structure(db_path: Path | None, symbol_name: str) -> dict[st
         "kind": "",
         "qualified_name": symbol_name,
         "file_path": "",
-        "members": [],
+        "methods": [],
+        "properties": [],
         "inherits": [],
         "implements": [],
         "injects": [],
@@ -67,19 +68,22 @@ def _collect_symbol_structure(db_path: Path | None, symbol_name: str) -> dict[st
             "file_path": str(symbol["path"]),
         }
     )
-    data["members"] = [
-        (str(r["kind"]), str(r["qualified_name"]))
-        for r in conn.execute(
+    for kind_key, kinds in (
+        ("methods", ("method", "constructor")),
+        ("properties", ("property", "field")),
+    ):
+        rows = conn.execute(
             """
             SELECT kind, qualified_name
             FROM symbols
             WHERE qualified_name LIKE ?
-              AND kind IN ('method', 'field', 'property', 'constructor')
+              AND kind IN ({})
             ORDER BY kind, qualified_name
-            """,
-            (pattern,),
+            """.format(",".join("?" * len(kinds))),
+            (pattern, *kinds),
         ).fetchall()
-    ]
+        data[kind_key] = [(str(r["kind"]), str(r["qualified_name"])) for r in rows]
+
     data["inherits"] = [
         str(r[0])
         for r in conn.execute(
@@ -144,10 +148,17 @@ def _render_links(items: list[str]) -> list[str]:
     return [f"- [[{item}]]" for item in uniq]
 
 
+def _render_method_lines(rows: list[tuple[str, str]]) -> list[str]:
+    if not rows:
+        return ["- (none)"]
+    return [f"- `{kind}` `{qname}`" for kind, qname in rows]
+
+
 def _render_structure(symbol_name: str, db_path: Path | None) -> str:
     info = _collect_symbol_structure(db_path, symbol_name)
-    members = info["members"]
-    assert isinstance(members, list)
+    methods = info["methods"]
+    properties = info["properties"]
+    assert isinstance(methods, list) and isinstance(properties, list)
     lines: list[str] = [
         f"# {info['name']}",
         "",
@@ -157,31 +168,26 @@ def _render_structure(symbol_name: str, db_path: Path | None) -> str:
         f"- kind: `{info['kind'] or 'unknown'}`",
         f"- file_path: `{info['file_path'] or '(not found)'}`",
         "",
-        "## Members",
+        "## Implements / Inherits",
+        "",
+        "### Inherits",
+        *_render_links(info["inherits"]),
+        "",
+        "### Implements",
+        *_render_links(info["implements"]),
+        "",
+        "## Injected dependencies",
+        *_render_links(info["injects"]),
+        "",
+        "## Methods",
+        *_render_method_lines(methods),
+        "",
+        "## Properties",
+        *_render_method_lines(properties),
+        "",
+        "## Calls (outgoing)",
+        *_render_links(info["calls"]),
     ]
-    if members:
-        for kind, qname in members:
-            lines.append(f"- `{kind}` `{qname}`")
-    else:
-        lines.append("- (none)")
-    lines.extend(
-        [
-            "",
-            "## Relationships",
-            "",
-            "### Inherits",
-            *_render_links(info["inherits"]),
-            "",
-            "### Implements",
-            *_render_links(info["implements"]),
-            "",
-            "### Injects",
-            *_render_links(info["injects"]),
-            "",
-            "### Calls",
-            *_render_links(info["calls"]),
-        ]
-    )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -192,34 +198,76 @@ def _extract_protected_notes(existing_content: str) -> str:
     return NOTES_HEADER + "\n"
 
 
+def _notes_header_line_index(lines: list[str]) -> int | None:
+    for i, line in enumerate(lines):
+        if line.strip().lower() == NOTES_HEADER.lower():
+            return i
+    return None
+
+
 def get_or_create_note(
+    repo_root: Path,
+    db_path: Path,
     symbol_name: str,
-    notes_dir: Path = NOTES_DIR,
-    db_path: Path | None = None,
-) -> Path:
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    path = _note_path(symbol_name, notes_dir)
+    *,
+    notes_dir: Path | None = None,
+) -> tuple[Path, str]:
+    """Create or open a symbol note. Returns ``(path, full_text)``."""
+    ndir = notes_dir or repo_notes_dir(repo_root)
+    ndir.mkdir(parents=True, exist_ok=True)
+    path = _note_path(symbol_name, ndir)
     if path.exists():
-        return path
+        return path, path.read_text(encoding="utf-8")
     structural = _render_structure(symbol_name, db_path)
     content = structural + "\n" + NOTES_HEADER + "\n"
     path.write_text(content, encoding="utf-8")
-    return path
+    return path, content
 
 
-def update_note(symbol_name: str, content: str, notes_dir: Path = NOTES_DIR) -> Path:
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    path = _note_path(symbol_name, notes_dir)
-    path.write_text(content, encoding="utf-8")
+def append_to_notes_section(
+    repo_root: Path,
+    symbol_name: str,
+    text: str,
+    *,
+    notes_dir: Path | None = None,
+) -> Path:
+    """Append ``text`` below the ``## Notes`` heading without changing the structural top half."""
+    ndir = notes_dir or repo_notes_dir(repo_root)
+    path = _note_path(symbol_name, ndir)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Note not found: {path}. Run `codeidx notes get-or-create {symbol_name}` first."
+        )
+    body = path.read_text(encoding="utf-8")
+    lines = body.splitlines()
+    idx = _notes_header_line_index(lines)
+    if idx is None:
+        raise ValueError(
+            f"Note {path} has no '{NOTES_HEADER}' section; fix the file or run sync."
+        )
+    head_lines = lines[: idx + 1]
+    tail_lines = lines[idx + 1 :]
+    addition = text.rstrip()
+    new_tail = list(tail_lines)
+    if new_tail and addition:
+        new_tail.append("")
+    if addition:
+        new_tail.extend(addition.splitlines())
+    new_content = "\n".join(head_lines + new_tail).rstrip() + "\n"
+    path.write_text(new_content, encoding="utf-8")
     return path
 
 
 def sync_note_structure(
+    repo_root: Path,
+    db_path: Path,
     symbol_name: str,
-    notes_dir: Path = NOTES_DIR,
-    db_path: Path | None = None,
+    *,
+    notes_dir: Path | None = None,
 ) -> Path:
-    path = get_or_create_note(symbol_name, notes_dir=notes_dir, db_path=db_path)
+    """Rebuild the structural top half; preserve everything from ``## Notes`` onward."""
+    ndir = notes_dir or repo_notes_dir(repo_root)
+    path, _ = get_or_create_note(repo_root, db_path, symbol_name, notes_dir=ndir)
     existing = path.read_text(encoding="utf-8")
     protected = _extract_protected_notes(existing)
     structural = _render_structure(symbol_name, db_path)

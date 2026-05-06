@@ -67,12 +67,19 @@ def discover_csproj_files(repo_root: Path) -> list[Path]:
     return sorted(p for p in repo_root.rglob("*.csproj") if p.is_file())
 
 
-def collect_csproj_infos_from_solutions(sln_paths: list[Path]) -> list[CsprojInfo]:
+def collect_csproj_infos_from_solutions(
+    sln_paths: list[Path],
+    *,
+    missing_csproj: list[str] | None = None,
+) -> list[CsprojInfo]:
     """Load and parse all projects referenced by the given solutions, de-duplicated by .csproj path.
 
     Used to merge a monorepo with many .sln files into one project graph in a single
     run_index pass (stronger cross-project resolution than --no-sln or an interactive
     single-solution pick).
+
+    Entries in a .sln that point at a path with no file on disk are skipped. When
+    ``missing_csproj`` is provided, each skip is appended as a human-readable string.
     """
     seen: set[str] = set()
     out: list[CsprojInfo] = []
@@ -82,6 +89,12 @@ def collect_csproj_infos_from_solutions(sln_paths: list[Path]) -> list[CsprojInf
                 continue
             key = str(cpp.resolve())
             if key in seen:
+                continue
+            if not cpp.is_file():
+                if missing_csproj is not None:
+                    missing_csproj.append(
+                        f"solution {sp.name} lists missing .csproj: {cpp}"
+                    )
                 continue
             seen.add(key)
             out.append(parse_csproj(cpp))

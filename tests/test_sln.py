@@ -43,3 +43,19 @@ def test_collect_csproj_infos_dedupes_across_solutions(tmp_path: Path) -> None:
     )
     assert len(infos) == 1
     assert infos[0].path == cs.resolve()
+
+
+def test_collect_csproj_infos_skips_missing_csproj_from_sln(tmp_path: Path) -> None:
+    sln = tmp_path / "x.sln"
+    sln.write_text(
+        "Microsoft Visual Studio Solution File, Format Version 12.00\n"
+        'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Gone", '
+        '"missing\\\\Gone.csproj", "{22222222-2222-2222-2222-222222222222}"\n'
+        "EndProject\n",
+        encoding="utf-8",
+    )
+    missing: list[str] = []
+    infos = collect_csproj_infos_from_solutions([sln], missing_csproj=missing)
+    assert infos == []
+    assert len(missing) == 1
+    assert "missing" in missing[0]

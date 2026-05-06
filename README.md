@@ -23,7 +23,7 @@ The Python package name is **`codeidx`**.
 ## Requirements
 
 - **Python 3.10+**
-- **Windows, macOS, or Linux** (paths and default DB location differ by OS)
+- **Windows, macOS, or Linux** (default index DB is **per repository** under `.codeidx/db/`)
 
 ---
 
@@ -70,7 +70,7 @@ python -m codeidx index "C:\path\to\monorepo" --all-solutions --force
 
 ### 2. Confirm where the database is
 
-Without **`--db`**, the index is stored in a **per-user default path** (see table below). After indexing:
+Without **`--db`**, the index is stored at **`<repo>/.codeidx/db/codeidx.db`** (relative to the directory you passed to **`index`**, usually the repo root). After indexing:
 
 ```powershell
 python -m codeidx query stats
@@ -95,11 +95,9 @@ python -m codeidx scan-obsidian --out-dir .codeidx/vault
 
 ## Default database location
 
-| OS | Default path |
-|----|----------------|
-| **Windows** | `%LOCALAPPDATA%\codeidx\codeidx.db` (e.g. `C:\Users\<you>\AppData\Local\codeidx\codeidx.db`) |
-| **macOS** | `~/Library/Application Support/codeidx/codeidx.db` |
-| **Linux** | `~/.local/share/codeidx/codeidx.db` |
+| Context | Default path |
+|---------|----------------|
+| **Repository root** `REPO` | `REPO/.codeidx/db/codeidx.db` |
 
 Override for both **index** and **query**:
 
@@ -168,16 +166,18 @@ Persistent symbol notes live in `.codeidx/notes` by default, with a protected `#
 | Subcommand | Purpose |
 |------------|--------|
 | `get-or-create` | Create or return note for `symbol_name`, with DB-derived structure section |
-| `update` | Replace note content for `symbol_name` |
+| `append` | Append text under the protected `## Notes` heading (after `get-or-create`) |
 | `sync` | Rebuild structural top half from DB and preserve the `## Notes` section |
 
 Examples:
 
 ```bash
 python -m codeidx notes get-or-create My.Namespace.Worker
+python -m codeidx notes append My.Namespace.Worker --text "Design note: …"
 python -m codeidx notes sync My.Namespace.Worker --db ./my-index.db
-python -m codeidx notes update My.Namespace.Worker "# Manual note content"
 ```
+
+Run **`notes`** from the **repository root** (or pass **`--repo`**) so the default DB and `.codeidx/notes/` paths resolve correctly.
 
 ## Obsidian export
 
@@ -222,8 +222,8 @@ Raw SQL examples: [docs/example_queries.sql](docs/example_queries.sql).
 
 ## MCP, Cursor, and AI workflows
 
-- Point your **SQLite MCP** server (or any client) at the **same path** printed by **`query stats`** or listed in the table above.
-- An empty or wrong path can look like a “broken” index (no tables or zero-byte file). **`query stats`** and the default path documentation are the fastest checks.
+- Point your **SQLite MCP** server (or any client) at the **same path** printed by **`query stats`** (default: **`<repo>/.codeidx/db/codeidx.db`**).
+- An empty or wrong path can look like a “broken” index (no tables or zero-byte file). **`query stats`** from the repo root is the fastest check.
 - Optional **Agent Skills** for structured queries can live in `.cursor/skills/` in this repo; configure MCP **`--db-path`** to match your indexer output.
 
 ---
@@ -243,7 +243,7 @@ Cross-project types (e.g. interface in a referenced project) are resolved when i
 |---------|----------------|
 | `Missing argument 'REPO'` | Use **`python -m codeidx index`** with no args from the repo root, or **`index .`**, or upgrade to a version where `REPO` defaults to `.`. |
 | `files_parsed: 0`, all skipped | Expected if nothing changed; use **`--force`** to re-parse. |
-| MCP shows empty schema | Wrong **`--db-path`**; confirm with **`query stats`** and `%LOCALAPPDATA%\codeidx\codeidx.db` on Windows. |
+| MCP shows empty schema | Wrong DB path in MCP; confirm with **`query stats`** from the repo root (default **`.codeidx/db/codeidx.db`**). |
 | “No implementations” for an interface | Re-index with **`--sln`** covering the project that declares the interface; see TRADEOFFS. |
 | **`find-references` empty for a type** | Normal if nothing in the indexed edge set points at that symbol (no calls/callees resolved to it, no base list). Use substring search / FTS / `grep-text`; see [TRADEOFFS](docs/TRADEOFFS.md#type-symbols-and-find-references). |
 
@@ -253,6 +253,8 @@ Cross-project types (e.g. interface in a referenced project) are resolved when i
 
 | Doc | Content |
 |-----|--------|
+| [docs/CHEATSHEET.md](docs/CHEATSHEET.md) | Short commands, defaults, **validation** checklist |
+| [docs/AGENTS_AND_HOOKS.md](docs/AGENTS_AND_HOOKS.md) | Cursor MCP, Claude hooks, WSL vs Windows |
 | [docs/TRADEOFFS.md](docs/TRADEOFFS.md) | Precision, inheritance edges, **type symbols vs find-references**, incremental behavior, limitations |
 | [docs/example_queries.sql](docs/example_queries.sql) | Sample SQL (FTS, edges, joins) |
 

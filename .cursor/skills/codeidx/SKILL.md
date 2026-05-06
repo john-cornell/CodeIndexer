@@ -15,7 +15,14 @@ description: >-
 ## Assumptions
 
 - The **codeidx index** is already built (SQLite on disk).
-- **SQLite MCP** is already configured in Cursor and points at that database.
+- The database for this project lives at **`<repo>/.codeidx/db/codeidx.db`** (same path on Windows and WSL when the repo is on a shared drive). Run `codeidx index` from the **repository root** to create or refresh it.
+- **SQLite MCP** is already configured in Cursor (e.g. server name `codeidx` from `codeidx init-agents`) and points at that database.
+
+## Notes workflow (business context)
+
+1. Use **MCP / SQL** (this skill) for **structure**: symbols, edges, FTS, callers.
+2. For **semantic** context (invariants, business rules, work logs), open **`<repo>/.codeidx/notes/<Symbol>.md`**. The top half is auto-generated from the index; the **`## Notes`** section is human/AI prose.
+3. After you **edit a core type** in source, persist reasoning: `codeidx notes append <QualifiedName> --from-stdin` (or `--text "..."`). Run `codeidx notes get-or-create <QualifiedName>` first if the file does not exist.
 
 Use the **MCP tools** the server exposes (e.g. `read_query`, `list_tables`, schema/description helpers—names vary by server) as the **primary** way to answer. You do **not** need `SELECT name FROM sqlite_master` on every turn if you already have the table list below; use **`list_tables` / `describe_table`** only when you need a column you are unsure of (see [schema.sql](../../../src/codeidx/db/schema.sql) in this repo).
 
@@ -109,4 +116,4 @@ python -m codeidx query callers-of --symbol-id <id>
 python -m codeidx query implementations-of --symbol-id <id>
 ```
 
-Default DB on Windows: `%LOCALAPPDATA%\codeidx\codeidx.db`. Use `--db` if the index lives elsewhere. An empty or wrong path produces an empty schema or a clear error—confirm with `stats` and the default path in the README.
+Use `--db` only if the database is not at `<repo>/.codeidx/db/codeidx.db`. Confirm with `codeidx query stats` from the repo root.

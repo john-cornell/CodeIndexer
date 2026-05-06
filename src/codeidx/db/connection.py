@@ -19,8 +19,8 @@ def connect(db_path: Path | str, *, create: bool = True) -> sqlite3.Connection:
     if not create and path.is_file() and path.stat().st_size == 0:
         raise ValueError(
             f"Database file is empty (0 bytes): {path}\n"
-            "Use the database path from your last `python -m codeidx index` run (see README for "
-            "the default location on your OS), or re-index the repo."
+            "Re-index from the repository root: `python -m codeidx index` (default DB: "
+            "`<repo>/.codeidx/db/codeidx.db`), or pass `--db` to the path you use for indexing."
         )
     if create:
         path.parent.mkdir(parents=True, exist_ok=True)

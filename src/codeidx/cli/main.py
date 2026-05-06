@@ -8,8 +8,15 @@ import click
 
 from codeidx import notes
 from codeidx.cli import obsidian, query_cmd
+from codeidx.cli.hook_cmd import hook_group
+from codeidx.cli.init_agents_cmd import register_init_agents
+from codeidx.cli.mcp_cmd import mcp_cmd
 from codeidx.indexer.pipeline import IndexStats, run_index
-from codeidx.paths import default_db_path
+from codeidx.paths import (
+    repo_vault_dir,
+    resolve_db_path,
+    require_existing_db,
+)
 from codeidx.projects.msbuild import discover_csproj_files, discover_solution_files
 
 
@@ -31,6 +38,11 @@ def main() -> None:
     """Code intelligence indexer backed by SQLite."""
 
 
+register_init_agents(main)
+main.add_command(mcp_cmd)
+main.add_command(hook_group)
+
+
 @main.command("index")
 @click.argument(
     "repo",
@@ -42,7 +54,7 @@ def main() -> None:
     "db_path",
     type=click.Path(path_type=Path),
     default=None,
-    help=f"SQLite database file (default: {default_db_path()})",
+    help="SQLite database (default: <REPO>/.codeidx/db/codeidx.db).",
 )
 @click.option("--sln", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None)
 @click.option(
@@ -105,10 +117,10 @@ def index_cmd(
     no_progress: bool,
 ) -> None:
     """Scan REPO and update DB. If REPO is omitted, uses the current directory."""
-    db_resolved = (db_path or default_db_path()).resolve()
-    if db_path is None:
-        click.echo(f"Using default database: {db_resolved}", err=True)
     root = (repo or Path(".")).resolve()
+    db_resolved = resolve_db_path(root, db_path)
+    if db_path is None:
+        click.echo(f"Using database: {db_resolved}", err=True)
     sln_path = sln.resolve() if sln else None
     csproj_list = [p.resolve() for p in csproj] if csproj else None
     if all_solutions and (no_sln or sln_path is not None or csproj_list):
@@ -183,26 +195,28 @@ def index_cmd(
 
 @main.group("query")
 @click.option(
+    "--repo",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Repository root (default: current directory). Implies --db under .codeidx/db/.",
+)
+@click.option(
     "--db",
     "db_path",
     type=click.Path(path_type=Path),
     default=None,
-    help=f"SQLite database file (default: {default_db_path()})",
+    help="SQLite database (default: <repo>/.codeidx/db/codeidx.db).",
 )
 @click.pass_context
-def query_group(ctx: click.Context, db_path: Path | None) -> None:
+def query_group(ctx: click.Context, repo: Path | None, db_path: Path | None) -> None:
     ctx.ensure_object(dict)
-    db_resolved = (db_path or default_db_path()).resolve()
-    if not db_resolved.is_file():
-        click.echo(
-            f"Database not found: {db_resolved}\n"
-            "Run `codeidx index` (or pass --db) to create it.",
-            err=True,
-        )
-        sys.exit(1)
+    repo_root = (repo or Path(".")).resolve()
+    db_resolved = resolve_db_path(repo_root, db_path)
+    require_existing_db(db_resolved)
     if db_path is None:
-        click.echo(f"Using default database: {db_resolved}", err=True)
+        click.echo(f"Using database: {db_resolved}", err=True)
     ctx.obj["db"] = db_resolved
+    ctx.obj["repo_root"] = repo_root
 
 
 @query_group.command("find-symbol")
@@ -342,30 +356,37 @@ def q_grep_text(
 @click.option(
     "--out-dir",
     type=click.Path(path_type=Path),
-    default=Path(".codeidx/vault"),
-    show_default=True,
-    help="Directory where Obsidian markdown files are written.",
+    default=None,
+    help="Output directory (default: <repo>/.codeidx/vault).",
 )
 @click.pass_context
-def q_obsidian(ctx: click.Context, out_dir: Path) -> None:
+def q_obsidian(ctx: click.Context, out_dir: Path | None) -> None:
     db_path: Path = ctx.obj["db"]
-    out = out_dir.resolve()
+    repo_root: Path = ctx.obj["repo_root"]
+    out = (out_dir or repo_vault_dir(repo_root)).resolve()
     count = obsidian.generate_vault(db_path, out)
     click.echo(f"Generated {count} Obsidian notes in {out}")
 
 
 @main.group("notes")
 @click.option(
+    "--repo",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Repository root (default: current directory). Notes live under .codeidx/notes/.",
+)
+@click.option(
     "--notes-dir",
     type=click.Path(path_type=Path),
-    default=Path(".codeidx/notes"),
-    show_default=True,
-    help="Directory for markdown symbol notes.",
+    default=None,
+    help="Override notes directory (default: <repo>/.codeidx/notes).",
 )
 @click.pass_context
-def notes_group(ctx: click.Context, notes_dir: Path) -> None:
+def notes_group(ctx: click.Context, repo: Path | None, notes_dir: Path | None) -> None:
     ctx.ensure_object(dict)
-    ctx.obj["notes_dir"] = notes_dir.resolve()
+    repo_root = (repo or Path(".")).resolve()
+    ctx.obj["repo_root"] = repo_root
+    ctx.obj["notes_dir"] = notes_dir.resolve() if notes_dir else None
 
 
 @notes_group.command("get-or-create")
@@ -375,30 +396,58 @@ def notes_group(ctx: click.Context, notes_dir: Path) -> None:
 def notes_get_or_create(
     ctx: click.Context, symbol_name: str, db_path: Path | None
 ) -> None:
-    notes_dir: Path = ctx.obj["notes_dir"]
-    db_resolved = db_path.resolve() if db_path else None
-    note_path = notes.get_or_create_note(symbol_name, notes_dir=notes_dir, db_path=db_resolved)
+    repo_root: Path = ctx.obj["repo_root"]
+    ndir = ctx.obj["notes_dir"]
+    db_resolved = resolve_db_path(repo_root, db_path)
+    require_existing_db(db_resolved)
+    note_path, _text = notes.get_or_create_note(
+        repo_root, db_resolved, symbol_name, notes_dir=ndir
+    )
     click.echo(str(note_path))
 
 
-@notes_group.command("update")
+@notes_group.command("append")
 @click.argument("symbol_name")
-@click.argument("content")
+@click.option("--text", "text_opt", default=None, help="Text to append under ## Notes")
+@click.option(
+    "--from-stdin",
+    "from_stdin",
+    is_flag=True,
+    help="Read append text from stdin (use when content has newlines).",
+)
 @click.pass_context
-def notes_update(ctx: click.Context, symbol_name: str, content: str) -> None:
-    notes_dir: Path = ctx.obj["notes_dir"]
-    note_path = notes.update_note(symbol_name, content, notes_dir=notes_dir)
+def notes_append(
+    ctx: click.Context,
+    symbol_name: str,
+    text_opt: str | None,
+    from_stdin: bool,
+) -> None:
+    repo_root: Path = ctx.obj["repo_root"]
+    ndir = ctx.obj["notes_dir"]
+    if from_stdin:
+        text = sys.stdin.read()
+    elif text_opt is not None:
+        text = text_opt
+    else:
+        raise click.UsageError("Provide --text or --from-stdin.")
+    note_path = notes.append_to_notes_section(
+        repo_root, symbol_name, text, notes_dir=ndir
+    )
     click.echo(str(note_path))
 
 
 @notes_group.command("sync")
 @click.argument("symbol_name")
-@click.option("--db", "db_path", type=click.Path(path_type=Path), required=True)
+@click.option("--db", "db_path", type=click.Path(path_type=Path), default=None)
 @click.pass_context
-def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path) -> None:
-    notes_dir: Path = ctx.obj["notes_dir"]
-    db_resolved = db_path.resolve()
-    note_path = notes.sync_note_structure(symbol_name, notes_dir=notes_dir, db_path=db_resolved)
+def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path | None) -> None:
+    repo_root: Path = ctx.obj["repo_root"]
+    ndir = ctx.obj["notes_dir"]
+    db_resolved = resolve_db_path(repo_root, db_path)
+    require_existing_db(db_resolved)
+    note_path = notes.sync_note_structure(
+        repo_root, db_resolved, symbol_name, notes_dir=ndir
+    )
     click.echo(str(note_path))
 
 
@@ -413,7 +462,7 @@ def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path) -> None:
     "db_path",
     type=click.Path(path_type=Path),
     default=None,
-    help=f"SQLite database file (default: {default_db_path()})",
+    help="SQLite database (default: <REPO>/.codeidx/db/codeidx.db).",
 )
 @click.option("--sln", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None)
 @click.option(
@@ -454,9 +503,8 @@ def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path) -> None:
 @click.option(
     "--out-dir",
     type=click.Path(path_type=Path),
-    default=Path(".codeidx/vault"),
-    show_default=True,
-    help="Directory where Obsidian markdown files are written.",
+    default=None,
+    help="Obsidian vault directory (default: <REPO>/.codeidx/vault).",
 )
 def scan_obsidian_cmd(
     repo: Path | None,
@@ -468,11 +516,13 @@ def scan_obsidian_cmd(
     force: bool,
     index_string_literals: bool,
     no_progress: bool,
-    out_dir: Path,
+    out_dir: Path | None,
 ) -> None:
     """Index and export Obsidian vault in one command."""
-    db_resolved = (db_path or default_db_path()).resolve()
     root = (repo or Path(".")).resolve()
+    db_resolved = resolve_db_path(root, db_path)
+    if db_path is None:
+        click.echo(f"Using database: {db_resolved}", err=True)
     sln_path = sln.resolve() if sln else None
     csproj_list = [p.resolve() for p in csproj] if csproj else None
     if all_solutions and (no_sln or sln_path is not None or csproj_list):
@@ -539,7 +589,7 @@ def scan_obsidian_cmd(
     for err in stats.errors:
         click.echo(f"  error: {err}", err=True)
 
-    out = out_dir.resolve()
+    out = (out_dir or repo_vault_dir(root)).resolve()
     count = obsidian.generate_vault(db_resolved, out)
     click.echo(f"Generated {count} Obsidian notes in {out}")
 
