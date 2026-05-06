@@ -181,6 +181,22 @@ python -m codeidx notes update My.Namespace.Worker "# Manual note content"
 
 ## Obsidian export
 
+### Commands
+
+- Export only (assumes you already indexed):
+
+```bash
+python -m codeidx query obsidian --out-dir .codeidx/vault
+```
+
+- One-shot scan + export:
+
+```bash
+python -m codeidx scan-obsidian --out-dir .codeidx/vault
+```
+
+### Output shape
+
 `query obsidian` creates one markdown file per indexed type-like symbol (`type`, `interface`, `enum`, `delegate`) under the output directory, nested by namespace path.
 
 Generated pages include wiki-links for:
@@ -190,11 +206,7 @@ Generated pages include wiki-links for:
 - methods
 - called methods (`calls`)
 
-For a one-shot flow (scan + export), use:
-
-```bash
-python -m codeidx scan-obsidian --out-dir .codeidx/vault
-```
+If you use Windows batch helpers, see `scan_obsidian.bat` / `scan_full.bat`.
 
 **`find-references` vs “every use of this type”:** The index only records certain relationships (calls, inheritance bases, usings). Types used in generics, DI registration, field types, etc. often have **no** incoming graph edges—use partial **`find-symbol`**, **`symbols_fts` / `LIKE`**, or **`grep-text`** for that. Details: [docs/TRADEOFFS.md](docs/TRADEOFFS.md#type-symbols-and-find-references).
 
