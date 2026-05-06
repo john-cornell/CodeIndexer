@@ -58,9 +58,10 @@ def hook_post_cs_edit() -> None:
                     "C# source was just changed. Add **knowledge** in the repo’s **markdown symbol "
                     "notes** (under `.codeidx/notes/`), **not** by editing `.cs` again for prose. "
                     "Pick the main type/method you touched (`QualifiedName`). "
-                    "`codeidx notes get-or-create <QualifiedName>` if the note is missing; then "
-                    "`codeidx notes append <QualifiedName> --text \"...\"` or `--from-stdin` "
-                    "— content goes under the `## Notes` heading only."
+                    "Use the **codeidx MCP tools** `get_or_create_note` (if the note is missing) "
+                    "and `append_note` — prose goes under the `## Notes` heading only. "
+                    "Use `sync_note_structure` when you need the auto-generated sections refreshed "
+                    "from the index."
                 ),
             }
         }

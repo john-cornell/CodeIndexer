@@ -23,8 +23,8 @@ from codeidx.paths import require_existing_db, resolve_db_path
     help="SQLite database (default: <repo>/.codeidx/db/codeidx.db).",
 )
 def mcp_cmd(repo: Path | None, db_path: Path | None) -> None:
-    """Run a stdio MCP server with read-only access to the codeidx SQLite database."""
+    """Run a stdio MCP server: read-only SQL on the codeidx DB plus markdown note tools under .codeidx/notes/."""
     repo_root = (repo or Path(".")).resolve()
     resolved = resolve_db_path(repo_root, db_path)
     require_existing_db(resolved)
-    run_mcp(resolved)
+    run_mcp(resolved, repo_root)

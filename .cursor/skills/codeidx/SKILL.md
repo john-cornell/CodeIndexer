@@ -22,9 +22,9 @@ description: >-
 
 1. Use **MCP / SQL** (this skill) for **structure**: symbols, edges, FTS, callers.
 2. For **semantic** context (invariants, business rules, work logs), open **`<repo>/.codeidx/notes/<Symbol>.md`**. The top half is auto-generated from the index; the **`## Notes`** section is human/AI prose.
-3. After you **edit a core type** in source, persist reasoning: `codeidx notes append <QualifiedName> --from-stdin` (or `--text "..."`). Run `codeidx notes get-or-create <QualifiedName>` first if the file does not exist.
+3. After you **edit a core type** in source, persist reasoning via **codeidx MCP**: call **`get_or_create_note`** if the note may not exist, then **`append_note`** with your prose (under **`## Notes`** only). Use **`sync_note_structure`** when the auto-generated sections should be refreshed from the index.
 
-Use the **MCP tools** the server exposes (e.g. `read_query`, `list_tables`, schema/description helpers—names vary by server) as the **primary** way to answer. You do **not** need `SELECT name FROM sqlite_master` on every turn if you already have the table list below; use **`list_tables` / `describe_table`** only when you need a column you are unsure of (see [schema.sql](../../../src/codeidx/db/schema.sql) in this repo).
+Use the **MCP tools** the server exposes for **structure** (e.g. `read_query`, `list_tables`, `describe_table` — SQL is read-only) and for **notes** (`get_or_create_note`, `append_note`, `sync_note_structure`, which write markdown under `.codeidx/notes/`). You do **not** need `SELECT name FROM sqlite_master` on every turn if you already have the table list below; use **`list_tables` / `describe_table`** only when you need a column you are unsure of (see [schema.sql](../../../src/codeidx/db/schema.sql) in this repo).
 
 ## Schema reference (codeidx v1)
 

@@ -19,8 +19,8 @@ MARK_SESSION = "hook session-start"
 
 # Shown in Claude for PostToolUse while the hook runs (command output has full prose).
 POST_CS_STATUS_MESSAGE = (
-    "codeidx: after C# saves, add prose to `.codeidx/notes/*.md` "
-    "(`notes get-or-create` then `notes append` under `## Notes` — not in `.cs` files)"
+    "codeidx: after C# saves, add prose to `.codeidx/notes/*.md` via MCP "
+    "(`get_or_create_note` then `append_note` under `## Notes` — not in `.cs` files)"
 )
 
 
@@ -172,13 +172,13 @@ Hooks are configured in **`.claude/settings.local.json`**. They invoke **`codeid
 **Index DB for this repo (from last `init-agents`):** `{db_s}`  
 **Repo root:** `{repo_s}`
 
-**Symbol notes (prose):** use the **CLI**, not SQLite MCP:
+**Symbol notes (prose):** use **codeidx MCP** tools (same server as SQL):
 
-- `codeidx notes get-or-create <QualifiedName>`
-- `codeidx notes append <QualifiedName> --text "…"` or `--from-stdin`
-- `codeidx notes sync <QualifiedName>` — refresh the auto-generated sections from the DB
+- `get_or_create_note` — open or create `<repo>/.codeidx/notes/<symbol>.md`; returns path and full file text.
+- `append_note` — append under `## Notes` only (call `get_or_create_note` first if the file might be missing).
+- `sync_note_structure` — rebuild the auto-generated top half from the index; preserves everything from `## Notes` onward.
 
-**codeidx MCP** is **read-only**: `read_query`, `list_tables`, `describe_table` only. It does **not** expose `append_insight` or any write/note tool; do not assume one exists.
+**SQL via MCP** stays **read-only**: `read_query`, `list_tables`, `describe_table` only (SQLite opened `mode=ro`).
 """
 
 

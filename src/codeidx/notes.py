@@ -236,7 +236,8 @@ def append_to_notes_section(
     path = _note_path(symbol_name, ndir)
     if not path.is_file():
         raise FileNotFoundError(
-            f"Note not found: {path}. Run `codeidx notes get-or-create {symbol_name}` first."
+            f"Note not found: {path}. Call MCP tool `get_or_create_note` for `{symbol_name}` "
+            f"(or `codeidx notes get-or-create {symbol_name}`) first."
         )
     body = path.read_text(encoding="utf-8")
     lines = body.splitlines()

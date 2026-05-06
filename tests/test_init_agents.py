@@ -55,8 +55,9 @@ def test_setup_claude_writes_claude_md_section(tmp_path: Path) -> None:
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "codeidx hook pre-grep-glob" in text
     assert ".claude/settings.local.json" in text
-    assert "notes get-or-create" in text
-    assert "append_insight" in text.lower()
+    assert "get_or_create_note" in text
+    assert "append_note" in text
+    assert "read-only" in text.lower()
 
 
 def test_setup_claude_md_section_single_block_after_rerun(tmp_path: Path) -> None:
@@ -224,8 +225,8 @@ def test_hook_post_cs_edit() -> None:
     body = json.loads(res.output.strip())
     ctx = body["hookSpecificOutput"]["additionalContext"]
     assert "C#" in ctx
-    assert "notes append" in ctx
-    assert "get-or-create" in ctx
+    assert "append_note" in ctx
+    assert "get_or_create_note" in ctx
 
 
 def test_cli_init_agents_default_db_path(tmp_path: Path) -> None:
