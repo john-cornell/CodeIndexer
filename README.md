@@ -206,7 +206,7 @@ Generated pages include wiki-links for:
 - methods
 - called methods (`calls`)
 
-If you use Windows batch helpers, see `scan_obsidian.bat` / `scan_full.bat`.
+If you use Windows batch helpers (in this repo), see **`scan.bat`**, **`full_scan.bat`**, **`update_scan.bat`**, **`full_update_scan.bat`** — [docs/CHEATSHEET.md](docs/CHEATSHEET.md) (Index section).
 
 **`find-references` vs “every use of this type”:** The index only records certain relationships (calls, inheritance bases, usings). Types used in generics, DI registration, field types, etc. often have **no** incoming graph edges—use partial **`find-symbol`**, **`symbols_fts` / `LIKE`**, or **`grep-text`** for that. Details: [docs/TRADEOFFS.md](docs/TRADEOFFS.md#type-symbols-and-find-references).
 

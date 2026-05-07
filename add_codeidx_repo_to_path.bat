@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 
-REM Adds THIS repo folder to Windows User PATH so scan_obsidian.bat etc. run from any cwd.
+REM Adds THIS repo folder to Windows User PATH so scan.bat / full_scan.bat etc. run from any cwd.
 REM Double-click or run:  add_codeidx_repo_to_path.bat
 REM Then open a new terminal / restart Cursor.
 

@@ -513,6 +513,12 @@ def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path | None) -> No
     help="Re-parse every file even when unchanged (full refresh).",
 )
 @click.option(
+    "--store-content",
+    "store_content",
+    is_flag=True,
+    help="Store raw file text in the DB for file_contents_fts / grep-text (larger DB).",
+)
+@click.option(
     "--index-string-literals",
     "index_string_literals",
     is_flag=True,
@@ -544,6 +550,7 @@ def scan_obsidian_cmd(
     all_solutions: bool,
     no_sln: bool,
     force: bool,
+    store_content: bool,
     index_string_literals: bool,
     no_mvvm_edges: bool,
     no_progress: bool,
@@ -603,7 +610,7 @@ def scan_obsidian_cmd(
         sln=sln_path,
         csproj=list(csproj_list) if csproj_list else None,
         all_solutions=all_solutions,
-        store_content=False,
+        store_content=store_content,
         extra_ignore=None,
         force=force,
         index_string_literals=index_string_literals,

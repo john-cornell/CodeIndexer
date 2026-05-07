@@ -35,12 +35,24 @@ codeidx --help
 cd /path/to/your/repo
 python -m codeidx index --all-solutions --force
 python -m codeidx index --sln path/to/Solution.sln
-python -m codeidx scan-obsidian --all-solutions --force   # index + vault
+python -m codeidx scan-obsidian --all-solutions --force --index-string-literals   # index + vault
+python -m codeidx scan-obsidian --all-solutions --force --index-string-literals --store-content   # + file body FTS (large DB)
 ```
 
-Heuristic **`mvvm_view`** / **`mvvm_primary_service`** edges run **by default** after indexing. Opt out: **`--no-mvvm-edges`**. (String literal **`string_ref`** edges stay opt-in: **`--index-string-literals`**.)
+Heuristic **`mvvm_view`** / **`mvvm_primary_service`** edges run **by default** after indexing. Opt out: **`--no-mvvm-edges`**.
 
-Windows helper (from CodeIndexer repo): `scan_full.bat` forwards `--all-solutions --force` plus your args.
+### Windows: index + Obsidian (batch helpers in CodeIndexer repo)
+
+Add the CodeIndexer folder to PATH (`add_codeidx_repo_to_path.bat`) or `cd` there, then:
+
+| Batch | Mode | What it runs |
+|-------|------|----------------|
+| **`scan.bat`** | Full | `--all-solutions --force --index-string-literals` + vault |
+| **`full_scan.bat`** | Full + bodies | Same + **`--store-content`** (larger DB, `file_contents_fts`) |
+| **`update_scan.bat`** | Incremental | `--all-solutions --index-string-literals` + vault (no **`--force`**) |
+| **`full_update_scan.bat`** | Incremental + bodies | Same + **`--store-content`** |
+
+Examples: `scan.bat`, `scan.bat C:\path\to\repo`, `update_scan.bat --no-progress`. Extra CLI args pass through (`%*`).
 
 ---
 
