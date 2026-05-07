@@ -18,6 +18,22 @@ The Python package name is **`codeidx`**.
 
 **Not** a Roslyn replacement: resolution is **syntactic** (Tree-sitter), with documented heuristics. See [docs/TRADEOFFS.md](docs/TRADEOFFS.md).
 
+### Example: comparing two similar domain types (manual vs codeidx)
+
+On a large indexed C# billing codebase, one session compared **`Payment`** vs **`VendorPayments`** / **`VendorPayment`** without using codeidx first (editor grep / search only), then using codeidx (MCP / structured queries on the SQLite index). **Your mileage will vary** with repo layout, machine, and how you search; this is a single anecdote, not a benchmark suite.
+
+| | Manual grep / search | codeidx (indexed DB) |
+|--|----------------------|----------------------|
+| **Time to a clear answer** | ~6–7 min; still not done | ~26 s to structured answer |
+| **Answer quality** | Easy to drown in hits and partial reads | Full **property lists** and **qualified names** for both types in one pass |
+
+**What codeidx surfaced immediately**
+
+- **`Payment`** (`Billing.Invoicing.Entities.Payment`) — client paying the firm: links to **`Invoices[]`**, **`PayorId`**, **`SourceAccountId`** / **`DestinationAccountId`**, trust/quick-payment/cheque flags, **reversal** fields (`ReversedAt`, `ReversalReason`), etc.
+- **`VendorPayment`** (`Billing.Accounts.Entities.VendorPayment`) — firm paying a vendor: **`PayeeId`**, **`PayeeName`**, **`PayeeFirstLastName`**, bank / BPAY / transfer fields, **`ApprovalRequestId`**, **`MultiPaymentId`**; **no** invoice collection link.
+
+**Takeaway:** **Payment** ≈ money **in** (client → firm); **VendorPayment** ≈ money **out** (firm → vendor, with approval / batch). Grep-style search burned on the order of **~90 s per broad scan** without converging; the index answered in **one short structured query cycle** once the DB existed.
+
 ---
 
 ## Requirements
