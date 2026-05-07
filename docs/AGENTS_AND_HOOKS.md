@@ -20,7 +20,7 @@ codeidx init-agents
 Then:
 
 - **Cursor:** restart the IDE after `.cursor/mcp.json` changes.
-- **Claude Code:** new sessions pick up `.claude/settings.local.json`; use `/hooks` in Claude Code to inspect merged hooks.
+- **Claude Code:** new sessions pick up **`.claude/settings.local.json`** (hooks + **`mcpServers`**); restart or reload MCP after changes. Use **`/hooks`** to inspect hook definitions.
 
 ## What `init-agents` does
 
@@ -31,10 +31,10 @@ Then:
 | `[REPO]` | Project root to receive files. Default: current directory (`.`). |
 | `--db PATH` | SQLite DB used in MCP config and in Claude **SessionStart** hook. Default: OS-specific (see below). |
 | `--agent cursor\|claude\|all` | Repeatable; default `all`. |
-| `--mcp-name NAME` | Cursor MCP server key in `mcp.json`. Default: `codeidx`. |
+| `--mcp-name NAME` | MCP server key in **Cursor** `mcp.json` and **Claude** `mcpServers`. Default: `codeidx`. |
 | `--dry-run` | Print planned actions; do not write files. |
 | `--force` | Overwrite Cursor skill + `schema.sql` even if unchanged. |
-| `--force-mcp` | Replace existing `mcp.json` entry when it differs (same `--mcp-name`). |
+| `--force-mcp` | Replace existing MCP definition when it differs (same `--mcp-name`; applies to Cursor and Claude). |
 
 ### Cursor (`--agent cursor` or `all`)
 
@@ -50,11 +50,14 @@ Writes under **`REPO/.cursor/`**:
 
 **Not configured by `init-agents`:** Cursor’s native **`.cursor/hooks.json`** (different product feature). This command sets up **MCP + skill**, not Cursor hook scripts.
 
-**Claude Code vs Cursor for MCP:** **`init-agents` only merges the codeidx stdio MCP into Cursor** (`.cursor/mcp.json`). It does **not** add **`mcpServers`** to **`~/.claude/settings.json`** or **`.claude/settings*.json`**. So in Claude Code, **`read_query` / note tools** from the **codeidx** server appear **only after you register that server yourself** (see below). A separate **generic SQLite** MCP (e.g. `user-sqlite`) gives SQL only — it does **not** include **`get_or_create_note`** / **`append_note`**.
+**Two MCP concepts:** The **codeidx** stdio server (SQL + note tools) is what **`init-agents`** registers. A separate **generic SQLite** MCP (e.g. `user-sqlite`) only exposes ad-hoc SQL — it does **not** include **`get_or_create_note`** / **`append_note`** unless that server is custom-built to do so.
 
 ### Claude Code (`--agent claude` or `all`)
 
-Merges **`REPO/.claude/settings.local.json`** (creates it if missing). Adds **idempotent** hook groups (skips if the same logical hook is already present).
+Merges **`REPO/.claude/settings.local.json`** (creates it if missing):
+
+1. **Hooks** — same **PreToolUse** / **PostToolUse** / **SessionStart** groups as documented below (idempotent by command marker).
+2. **`mcpServers`** — merges the same **stdio** definition as Cursor (`python -m codeidx mcp --repo <REPO> --db <db>`), keyed by **`--mcp-name`** (default `codeidx`). **`--force-mcp`** overwrites an existing entry with a different definition.
 
 Also merges a short **codeidx** section into **`REPO/CLAUDE.md`** (between HTML comment markers) so **Claude Code** sessions (including `/resume`) load hook and notes facts from the project root — not only from searching `~/.claude`.
 
@@ -75,32 +78,9 @@ Also merges a short **codeidx** section into **`REPO/CLAUDE.md`** (between HTML 
 
 Both apply together. Your global **PreToolUse** hooks (e.g. a Bash rewriter) and project **codeidx** hooks can all run; they are not mutually exclusive.
 
-### Registering the codeidx MCP server in Claude Code (WSL / Linux / macOS)
+### Manual / global Claude MCP (optional)
 
-Merge a top-level **`mcpServers`** object into **`~/.claude/settings.json`** (user) or **`REPO/.claude/settings.json`** (project), or use the **`claude mcp add`** flow from [Claude Code MCP docs](https://code.claude.com/docs/en/agent-sdk/mcp). Use the **same** **`--repo`** and **`--db`** paths you use for **`index`** in that environment (WSL: **`/mnt/c/...`**, not **`C:\...`**).
-
-Example (WSL, billing repo — adjust paths; merge with existing JSON keys):
-
-```json
-{
-  "mcpServers": {
-    "codeidx": {
-      "command": "python3",
-      "args": [
-        "-m",
-        "codeidx",
-        "mcp",
-        "--repo",
-        "/mnt/c/Code/billing",
-        "--db",
-        "/mnt/c/Code/billing/.codeidx/db/codeidx.db"
-      ]
-    }
-  }
-}
-```
-
-If **`codeidx`** is on **`PATH`** as a shim, you can use **`"command": "codeidx"`** and **`"args": ["mcp", "--repo", "...", "--db", "..."]`** instead. Restart the Claude Code session (or reload MCP) after editing settings.
+**`init-agents`** writes the **codeidx** server into **project** **`settings.local.json`**. For a **user-wide** MCP list, or to use **`python3`** / a **`codeidx`** shim path instead of **`python`**, merge **`mcpServers`** into **`~/.claude/settings.json`** or use **`claude mcp add`** ([Claude Code MCP docs](https://code.claude.com/docs/en/agent-sdk/mcp)). On **WSL**, run **`init-agents` from WSL** so embedded paths are **`/mnt/c/...`** if that is how you index.
 
 ## Default database path (`--db` omitted)
 
@@ -139,7 +119,7 @@ Used only as **Claude Code** command hooks; stdin is hook JSON, stdout is hook r
 | Message | Meaning |
 |---------|---------|
 | **Unchanged … SKILL.md / schema.sql** | Content matches bundled template; use **`--force`** to overwrite. |
-| **Skipped MCP server … use --force-mcp** | `mcp.json` already has that server name with a **different** definition. |
+| **Skipped MCP server … use --force-mcp** | Cursor `mcp.json` or Claude **`mcpServers`** already has that server name with a **different** definition. |
 | **Hook already present** | Idempotent skip (or marker matched). |
 | **Refreshed hook …** | Old `python -m codeidx hook` upgraded to `codeidx` on `PATH`. |
 
@@ -160,7 +140,8 @@ Used only as **Claude Code** command hooks; stdin is hook JSON, stdout is hook r
 |------|------|
 | `src/codeidx/cli/init_agents_cmd.py` | `init-agents` Click command |
 | `src/codeidx/agents/cursor_setup.py` | Cursor skill + `mcp.json` merge |
-| `src/codeidx/agents/claude_setup.py` | Claude `settings.local.json` merge + hook command building |
+| `src/codeidx/agents/mcp_spec.py` | Shared stdio MCP spec for Cursor + Claude |
+| `src/codeidx/agents/claude_setup.py` | Claude `settings.local.json` merge (hooks + `mcpServers`) + hook command building |
 | `src/codeidx/cli/hook_cmd.py` | `codeidx hook` implementations |
 | `src/codeidx/cli/mcp_cmd.py` | `codeidx mcp` entry |
 | `src/codeidx/agents/bundled/cursor/SKILL.md` | Bundled Cursor skill source |

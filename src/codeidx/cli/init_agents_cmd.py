@@ -42,7 +42,7 @@ def register_init_agents(main: click.Group) -> None:
         "--mcp-name",
         default="codeidx",
         show_default=True,
-        help="Cursor mcp.json server name",
+        help="MCP server name in Cursor mcp.json and Claude mcpServers (default: codeidx)",
     )
     @click.option(
         "--dry-run",
@@ -57,7 +57,7 @@ def register_init_agents(main: click.Group) -> None:
     @click.option(
         "--force-mcp",
         is_flag=True,
-        help="Replace Cursor MCP server entry if it already exists with a different definition",
+        help="Replace MCP server entry if it already exists with a different definition (Cursor mcp.json and Claude mcpServers)",
     )
     def init_agents_cmd(
         repo: Path | None,
@@ -68,7 +68,7 @@ def register_init_agents(main: click.Group) -> None:
         force: bool,
         force_mcp: bool,
     ) -> None:
-        """Configure Cursor (skill + MCP) and/or Claude Code hooks for codeidx."""
+        """Configure Cursor (skill + MCP) and/or Claude Code (hooks + mcpServers + CLAUDE.md) for codeidx."""
         root = (repo or Path(".")).resolve()
         db_resolved = resolve_db_path(root, db_path)
         chosen = _normalize_agents(tuple(a.lower() for a in agents))
@@ -86,7 +86,13 @@ def register_init_agents(main: click.Group) -> None:
                 click.echo(m)
 
         if "claude" in chosen:
-            cl = setup_claude(root, db_path=db_resolved, dry_run=dry_run)
+            cl = setup_claude(
+                root,
+                db_path=db_resolved,
+                dry_run=dry_run,
+                mcp_server_name=mcp_name,
+                force_mcp=force_mcp,
+            )
             for m in cl.messages:
                 click.echo(m)
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codeidx.agents.json_util import merge_mcp_server, read_json_file, write_json_file
+from codeidx.agents.mcp_spec import build_codeidx_stdio_mcp_server_spec
 
 
 @dataclass
@@ -86,18 +87,7 @@ def setup_cursor(
         else:
             messages.append(f"Unchanged (use --force to overwrite): {schema_path}")
 
-    server_spec = {
-        "command": "python",
-        "args": [
-            "-m",
-            "codeidx",
-            "mcp",
-            "--repo",
-            str(repo_root.resolve()),
-            "--db",
-            str(db_path.resolve()),
-        ],
-    }
+    server_spec = build_codeidx_stdio_mcp_server_spec(repo_root, db_path)
 
     mcp_action = "skip"
     if dry_run:

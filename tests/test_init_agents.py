@@ -52,6 +52,11 @@ def test_setup_claude_writes_claude_md_section(tmp_path: Path) -> None:
     db.write_bytes(b"")
     res = setup_claude(tmp_path, db_path=db, dry_run=False)
     assert res.claude_md_path == tmp_path / "CLAUDE.md"
+    claude_settings = json.loads(
+        (tmp_path / ".claude" / "settings.local.json").read_text(encoding="utf-8")
+    )
+    assert "mcpServers" in claude_settings
+    assert claude_settings["mcpServers"]["codeidx"]["args"][4] == str(tmp_path.resolve())
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "codeidx hook pre-grep-glob" in text
     assert ".claude/settings.local.json" in text
@@ -77,9 +82,12 @@ def test_merge_claude_settings_idempotent(tmp_path: Path) -> None:
     db.write_bytes(b"")
     merged, msgs1 = merge_claude_settings({}, db, tmp_path)
     assert any(MARK_PRE in m for m in msgs1)
+    assert "mcpServers" in merged
+    assert merged["mcpServers"]["codeidx"]["command"] == "python"
     merged2, msgs2 = merge_claude_settings(merged, db, tmp_path)
-    assert len(msgs2) == 3
-    assert all("already present" in m for m in msgs2)
+    assert len(msgs2) == 4
+    assert sum(1 for m in msgs2 if "already present" in m) == 3
+    assert any("unchanged" in m and "mcpServers" in m for m in msgs2)
     pre = merged2["hooks"]["PreToolUse"]
     assert sum(1 for g in pre if any(MARK_PRE in str(h.get("command", "")) for h in g.get("hooks", []))) == 1
 
@@ -246,3 +254,31 @@ def test_cli_init_agents_default_db_path(tmp_path: Path) -> None:
     args = mcp["mcpServers"]["codeidx"]["args"]
     expected = str((tmp_path / ".codeidx" / "db" / "codeidx.db").resolve())
     assert expected in args
+
+
+def test_cli_init_agents_claude_writes_mcp_servers(tmp_path: Path) -> None:
+    """Claude settings.local.json gets mcpServers.codeidx with --repo and --db."""
+    db = tmp_path / ".codeidx" / "db" / "codeidx.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.write_bytes(b"")
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "init-agents",
+            str(tmp_path),
+            "--agent",
+            "claude",
+            "--db",
+            str(db),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    settings = json.loads(
+        (tmp_path / ".claude" / "settings.local.json").read_text(encoding="utf-8")
+    )
+    assert "mcpServers" in settings
+    spec = settings["mcpServers"]["codeidx"]
+    assert spec["command"] == "python"
+    assert str(tmp_path.resolve()) in spec["args"]
+    assert str(db.resolve()) in spec["args"]

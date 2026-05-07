@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from codeidx.agents.json_util import read_json_file, write_json_file
+from codeidx.agents.json_util import merge_mcp_server, read_json_file, write_json_file
+from codeidx.agents.mcp_spec import build_codeidx_stdio_mcp_server_spec
 
 CODEIDX_CLAUDE_MD_BEGIN = "<!-- codeidx init-agents: start -->"
 CODEIDX_CLAUDE_MD_END = "<!-- codeidx init-agents: end -->"
@@ -163,7 +164,7 @@ def _codeidx_claude_md_section(db_path: Path, repo_root: Path) -> str:
     repo_s = str(repo_root.resolve())
     return f"""## codeidx (project)
 
-Hooks are configured in **`.claude/settings.local.json`**. They invoke **`codeidx hook …`** subcommands — there is no script file named `pre-grep-glob` on disk.
+Hooks and the **codeidx MCP** server entry are configured in **`.claude/settings.local.json`** (from **`codeidx init-agents --agent claude`**). Hooks invoke **`codeidx hook …`** subcommands — there is no script file named `pre-grep-glob` on disk.
 
 - **`codeidx hook pre-grep-glob`** — **PreToolUse** when the tool is **Grep** or **Glob**. Injects a reminder to use the codeidx SQLite index (MCP / `read_query`, FTS) for structure before huge repo scans.
 - **`codeidx hook post-cs-edit`** — **PostToolUse** after **Edit/Write** of **`*.cs`**. Reminds you to log rationale in **markdown symbol notes** under **`.codeidx/notes/`** (not in `.cs` files).
@@ -227,8 +228,11 @@ def merge_claude_settings(
     data: dict[str, Any],
     db_path: Path,
     repo_root: Path,
+    *,
+    mcp_server_name: str = "codeidx",
+    force_mcp: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
-    """Merge codeidx hooks into settings dict. Returns (merged, messages)."""
+    """Merge codeidx hooks and ``mcpServers`` into settings dict. Returns (merged, messages)."""
     messages: list[str] = []
     out = dict(data)
     if "$schema" not in out:
@@ -265,6 +269,20 @@ def merge_claude_settings(
 
     messages.extend(_sync_codeidx_hook_commands(hooks, db_path, repo_root))
 
+    server_spec = build_codeidx_stdio_mcp_server_spec(repo_root, db_path)
+    out, mcp_action = merge_mcp_server(out, mcp_server_name, server_spec, force=force_mcp)
+    if mcp_action == "skip_conflict":
+        messages.append(
+            f"Skipped Claude MCP server {mcp_server_name!r}: already present with different "
+            f"definition (use --force-mcp to replace)."
+        )
+    elif mcp_action == "add":
+        messages.append(f"Added Claude MCP server {mcp_server_name!r} to mcpServers")
+    elif mcp_action == "update":
+        messages.append(f"Updated Claude MCP server {mcp_server_name!r} in mcpServers")
+    else:
+        messages.append(f"Claude MCP server {mcp_server_name!r} unchanged in mcpServers")
+
     return out, messages
 
 
@@ -273,6 +291,8 @@ def setup_claude(
     *,
     db_path: Path,
     dry_run: bool,
+    mcp_server_name: str = "codeidx",
+    force_mcp: bool = False,
 ) -> ClaudeInitResult:
     settings_path = repo_root / ".claude" / "settings.local.json"
     messages: list[str] = []
@@ -282,7 +302,13 @@ def setup_claude(
     else:
         data = {}
 
-    merged, merge_msgs = merge_claude_settings(data, db_path, repo_root)
+    merged, merge_msgs = merge_claude_settings(
+        data,
+        db_path,
+        repo_root,
+        mcp_server_name=mcp_server_name,
+        force_mcp=force_mcp,
+    )
     messages.extend(merge_msgs)
 
     md_path, md_msgs = merge_codeidx_into_claude_md(repo_root, db_path, dry_run=dry_run)

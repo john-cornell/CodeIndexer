@@ -89,9 +89,9 @@ codeidx init-agents --force           # overwrite bundled skill copy in .cursor
 ```
 
 - **Cursor:** restart IDE after `mcp.json` changes.
-- **Claude Code:** hooks in `.claude/settings.local.json`; project hints in `CLAUDE.md` (see [AGENTS_AND_HOOKS.md](AGENTS_AND_HOOKS.md)). **`init-agents` does not register MCP for Claude** — add **`mcpServers.codeidx`** yourself (same `python3 -m codeidx mcp --repo … --db …` as Cursor) or note tools stay unavailable.
+- **Claude Code:** hooks + **`mcpServers`** in `.claude/settings.local.json`; project hints in `CLAUDE.md` (see [AGENTS_AND_HOOKS.md](AGENTS_AND_HOOKS.md)). Run **`init-agents --agent claude`** (or **`all`**) from the environment you use for Claude (e.g. WSL) so paths match **`index`**.
 
-**codeidx MCP:** SQL is read-only (`read_query`, `list_tables`, `describe_table`). Symbol notes use **`get_or_create_note`**, **`append_note`**, **`sync_note_structure`** (markdown under `.codeidx/notes/`). Server needs **`--repo`** and **`--db`** (see `init-agents` for Cursor; [AGENTS_AND_HOOKS.md](AGENTS_AND_HOOKS.md) for Claude Code).
+**codeidx MCP:** SQL is read-only (`read_query`, `list_tables`, `describe_table`). Symbol notes use **`get_or_create_note`**, **`append_note`**, **`sync_note_structure`** (markdown under `.codeidx/notes/`). Server needs **`--repo`** and **`--db`** — **`init-agents`** merges this into Cursor **`mcp.json`** and Claude **`mcpServers`** ([AGENTS_AND_HOOKS.md](AGENTS_AND_HOOKS.md)).
 
 ---
 

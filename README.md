@@ -249,7 +249,7 @@ Raw SQL examples: [docs/example_queries.sql](docs/example_queries.sql).
 
 ## MCP, Cursor, and AI workflows
 
-- Point the **codeidx MCP** server at the **same DB** as **`query stats`** (default **`<repo>/.codeidx/db/codeidx.db`**). **`init-agents`** writes **`mcp`** with **`--repo`** and **`--db`**; SQL tools are read-only; note tools write **`.codeidx/notes/*.md`**.
+- Point the **codeidx MCP** server at the **same DB** as **`query stats`** (default **`<repo>/.codeidx/db/codeidx.db`**). **`init-agents`** merges **`mcp`** into **Cursor** (`.cursor/mcp.json`) and **`mcpServers`** into **Claude Code** (`.claude/settings.local.json`) with **`--repo`** and **`--db`**; SQL tools are read-only; note tools write **`.codeidx/notes/*.md`**.
 - An empty or wrong path can look like a “broken” index (no tables or zero-byte file). **`query stats`** from the repo root is the fastest check.
 - Optional **Agent Skills** live under **`.cursor/skills/codeidx/`** after **`init-agents`**; keep **`--db`** (and **`--repo`**) in MCP aligned with how you **`index`**.
 
@@ -281,7 +281,7 @@ Cross-project types (e.g. interface in a referenced project) are resolved when i
 | Doc | Content |
 |-----|--------|
 | [docs/CHEATSHEET.md](docs/CHEATSHEET.md) | Short commands, defaults, **validation** checklist |
-| [docs/AGENTS_AND_HOOKS.md](docs/AGENTS_AND_HOOKS.md) | Cursor MCP, Claude hooks, WSL vs Windows |
+| [docs/AGENTS_AND_HOOKS.md](docs/AGENTS_AND_HOOKS.md) | Cursor + Claude **`init-agents`**, MCP, hooks, WSL vs Windows |
 | [docs/TRADEOFFS.md](docs/TRADEOFFS.md) | Precision, inheritance edges, **type symbols vs find-references**, incremental behavior, limitations |
 | [docs/example_queries.sql](docs/example_queries.sql) | Sample SQL (FTS, edges, joins) |
 
