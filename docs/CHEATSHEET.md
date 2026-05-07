@@ -91,7 +91,7 @@ codeidx init-agents --force           # overwrite bundled skill copy in .cursor
 - **Cursor:** restart IDE after `mcp.json` changes.
 - **Claude Code:** hooks in `.claude/settings.local.json`; project hints in `CLAUDE.md` (see [AGENTS_AND_HOOKS.md](AGENTS_AND_HOOKS.md)).
 
-**codeidx MCP** tools: `read_query`, `list_tables`, `describe_table` only (read-only).
+**codeidx MCP:** SQL is read-only (`read_query`, `list_tables`, `describe_table`). Symbol notes use **`get_or_create_note`**, **`append_note`**, **`sync_note_structure`** (markdown under `.codeidx/notes/`). Server needs **`--repo`** and **`--db`** (see `init-agents`).
 
 ---
 

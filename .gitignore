@@ -9,3 +9,6 @@ dist/
 build/
 obj/
 bin/
+
+# Repomix / bundle dumps
+repomix*

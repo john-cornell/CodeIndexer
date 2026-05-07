@@ -11,7 +11,7 @@ The Python package name is **`codeidx`**.
 | Capability | Notes |
 |------------|--------|
 | **Symbols** | Types, methods, interfaces, etc., with `qualified_name` and file locations |
-| **Edges** | `calls`, `injects`, `implements` / `inherits` (C# bases), `imports` (usings); optional `string_ref` (see `--index-string-literals`) |
+| **Edges** | `calls`, `injects`, `implements` / `inherits` (C# bases), `imports` (usings); optional `string_ref` (`--index-string-literals`); heuristic **`mvvm_view`** / **`mvvm_primary_service`** (on by default; `--no-mvvm-edges` to skip) |
 | **FTS5** | Symbol and file-path search |
 | **Projects** | `.sln` / `.csproj` graph: project references and package references |
 | **Incremental index** | Skips unchanged files by size, mtime, and SHA-256 |
@@ -88,7 +88,7 @@ python -m codeidx query implementations-of --symbol-id 42
 python -m codeidx query callers-of --symbol-id 99
 python -m codeidx query obsidian --out-dir .codeidx/vault
 python -m codeidx notes get-or-create My.Namespace.Service
-python -m codeidx scan-obsidian --out-dir .codeidx/vault
+python -m codeidx scan-obsidian --all-solutions --force --index-string-literals --out-dir .codeidx/vault
 ```
 
 ---
@@ -127,7 +127,8 @@ python -m codeidx index [REPO] [options]
 | `--no-sln` | Skip `.sln` / `.csproj` discovery and **any interactive prompt**; index all files under `REPO` without a solution graph (faster, weaker resolution). Incompatible with `--sln` / `--csproj` and with `--all-solutions`. |
 | `--no-progress` | Suppress periodic **stderr** progress lines (default: a line every 200 `.cs` files or every 8 seconds). |
 | `--index-string-literals` | Emit **`string_ref`** edges when a quoted literal uniquely matches a type/interface/enum/delegate **name** (heuristic; see TRADEOFFS). |
-| `--store-content` | Store raw file text for `grep-text` (larger DB) |
+| `--no-mvvm-edges` | Skip post-index **`mvvm_view`** / **`mvvm_primary_service`** edges (default: emit). |
+| `--store-content` | Store raw file text for `grep-text` / `file_contents_fts` (larger DB) |
 | `--ignore PATTERN` | Extra gitignore-style ignore (repeatable) |
 
 **Incremental behavior:** unchanged files (same size, mtime, hash) are **skipped**. If you see `files_parsed: 0` and expected updates, run with **`--force`** or delete the DB and re-index.
@@ -181,6 +182,10 @@ Run **`notes`** from the **repository root** (or pass **`--repo`**) so the defau
 
 ## Obsidian export
 
+### `scan-obsidian` (index + vault)
+
+Runs **`index`** on **`REPO`** (default: current directory), then generates the vault. Same indexing flags as **`index`** where applicable: **`--all-solutions`**, **`--force`**, **`--index-string-literals`**, **`--store-content`**, **`--no-mvvm-edges`**, **`--no-progress`**, **`--sln`** / **`--csproj`** (same combination rules as **`index`**). **`--out-dir`** overrides the vault path (default **`<repo>/.codeidx/vault`**). On Windows, use **`scan.bat`** / **`full_scan.bat`** / **`update_scan.bat`** / **`full_update_scan.bat`** from this repo — [docs/CHEATSHEET.md](docs/CHEATSHEET.md).
+
 ### Commands
 
 - Export only (assumes you already indexed):
@@ -189,10 +194,16 @@ Run **`notes`** from the **repository root** (or pass **`--repo`**) so the defau
 python -m codeidx query obsidian --out-dir .codeidx/vault
 ```
 
-- One-shot scan + export:
+- One-shot scan + export (typical: merged solutions + string literals + full parse):
 
 ```bash
-python -m codeidx scan-obsidian --out-dir .codeidx/vault
+python -m codeidx scan-obsidian --all-solutions --force --index-string-literals --out-dir .codeidx/vault
+```
+
+- Same with stored file bodies (larger DB, enables **`grep-text`**):
+
+```bash
+python -m codeidx scan-obsidian --all-solutions --force --index-string-literals --store-content --out-dir .codeidx/vault
 ```
 
 ### Output shape
@@ -222,9 +233,9 @@ Raw SQL examples: [docs/example_queries.sql](docs/example_queries.sql).
 
 ## MCP, Cursor, and AI workflows
 
-- Point your **SQLite MCP** server (or any client) at the **same path** printed by **`query stats`** (default: **`<repo>/.codeidx/db/codeidx.db`**).
+- Point the **codeidx MCP** server at the **same DB** as **`query stats`** (default **`<repo>/.codeidx/db/codeidx.db`**). **`init-agents`** writes **`mcp`** with **`--repo`** and **`--db`**; SQL tools are read-only; note tools write **`.codeidx/notes/*.md`**.
 - An empty or wrong path can look like a “broken” index (no tables or zero-byte file). **`query stats`** from the repo root is the fastest check.
-- Optional **Agent Skills** for structured queries can live in `.cursor/skills/` in this repo; configure MCP **`--db-path`** to match your indexer output.
+- Optional **Agent Skills** live under **`.cursor/skills/codeidx/`** after **`init-agents`**; keep **`--db`** (and **`--repo`**) in MCP aligned with how you **`index`**.
 
 ---
 

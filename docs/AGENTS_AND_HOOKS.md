@@ -44,9 +44,9 @@ Writes under **`REPO/.cursor/`**:
 2. **`skills/codeidx/schema.sql`** — copy of the indexer schema for offline reference.
 3. **`mcp.json`** — merges an **`mcpServers`** entry (default name `codeidx`) that runs:
 
-   `python -m codeidx mcp --db <resolved --db>`
+   `python -m codeidx mcp --repo <REPO> --db <resolved --db>`
 
-   (or the `codeidx` executable from your install, depending on environment).
+   (or the `codeidx` executable from your install, depending on environment). The server exposes read-only SQL plus note tools that write **`<repo>/.codeidx/notes/*.md`**.
 
 **Not configured by `init-agents`:** Cursor’s native **`.cursor/hooks.json`** (different product feature). This command sets up **MCP + skill**, not Cursor hook scripts.
 
@@ -95,7 +95,7 @@ There is **no** global per-user default. Use **`--db PATH`** everywhere if you s
 
 ### `codeidx mcp`
 
-Stdio MCP server: read-only SQLite access (e.g. `read_query`, `list_tables`, `describe_table`). Cursor should point MCP at this server and the same **`--db`** you index.
+Stdio MCP server: **read-only** SQL (`read_query`, `list_tables`, `describe_table`) on the index DB, plus **`get_or_create_note`**, **`append_note`**, **`sync_note_structure`** for symbol markdown under **`.codeidx/notes/`**. Pass **`--repo`** (indexed project root) and **`--db`** so paths resolve correctly. Cursor should use the same **`--db`** you **`index`**.
 
 ### `codeidx hook …`
 
