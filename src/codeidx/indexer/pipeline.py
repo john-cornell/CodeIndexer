@@ -514,7 +514,13 @@ def run_index(
 
     proj_id_by_path: dict[str, int] = {}
     for info in csproj_infos:
-        pid = upsert_project(conn, name=info.name, path=str(info.path), kind="csproj")
+        pid = upsert_project(
+            conn,
+            name=info.name,
+            path=str(info.path),
+            kind="csproj",
+            domain=info.domain,
+        )
         proj_id_by_path[str(info.path)] = pid
     for info in csproj_infos:
         pid = proj_id_by_path[str(info.path)]
@@ -651,6 +657,12 @@ def run_index(
             _maybe_progress()
 
     _repair_unresolved_inheritance_edges(conn)
+    try:
+        from codeidx.features import build_features as _build_features
+
+        _build_features(conn)
+    except Exception as e:
+        stats.errors.append(f"features inference skipped: {e}")
     conn.commit()
 
     dt = (time.perf_counter() - t0) * 1000

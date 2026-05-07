@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from codeidx.db.connection import connect
@@ -148,6 +149,37 @@ def generate_vault(db_path: Path, out_dir: Path) -> int:
         note_path = _note_path_for_symbol(out_dir, qname)
         note_path.parent.mkdir(parents=True, exist_ok=True)
         note_path.write_text(md, encoding="utf-8")
+        written += 1
+
+    try:
+        feat_rows = conn.execute(
+            """SELECT name, domain, viewmodel, service FROM features
+               ORDER BY COALESCE(domain, ''), name"""
+        ).fetchall()
+    except sqlite3.OperationalError:
+        feat_rows = []
+
+    features_dir = out_dir / "Features"
+    features_dir.mkdir(parents=True, exist_ok=True)
+    for fr in feat_rows:
+        fname = str(fr["name"])
+        domain = fr["domain"]
+        vm = str(fr["viewmodel"])
+        svc = fr["service"]
+        lines = [
+            f"# Feature: {fname}",
+            "",
+            f"**Domain:** {domain or ''}",
+            f"**ViewModel:** [[{_wikilink_for_qualified(vm)}]]",
+        ]
+        if svc:
+            lines.extend(
+                ["", f"**Service:** [[{_wikilink_for_qualified(str(svc))}]]"]
+            )
+        lines.append("")
+        (features_dir / f"{fname}.md").write_text(
+            "\n".join(lines), encoding="utf-8"
+        )
         written += 1
 
     conn.close()

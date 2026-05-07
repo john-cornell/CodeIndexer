@@ -12,6 +12,7 @@ class CsprojInfo:
     name: str
     project_references: list[Path] = field(default_factory=list)
     package_references: list[str] = field(default_factory=list)
+    domain: str | None = None
 
 
 _SLN_PROJECT = re.compile(
@@ -39,16 +40,27 @@ def _strip_ns(tag: str) -> str:
     return tag
 
 
+def _domain_from_root_namespace(root_namespace: str | None) -> str | None:
+    if not root_namespace or not root_namespace.strip():
+        return None
+    first = root_namespace.strip().split(".", 1)[0].strip()
+    return first or None
+
+
 def parse_csproj(csproj_path: Path) -> CsprojInfo:
     tree = ET.parse(csproj_path)
     root_el = tree.getroot()
     name = csproj_path.stem
     proj_refs: list[Path] = []
     pkg_refs: list[str] = []
+    root_namespace: str | None = None
     base = csproj_path.parent.resolve()
     for el in root_el.iter():
         tag = _strip_ns(el.tag)
-        if tag == "ProjectReference":
+        if tag == "RootNamespace" and el.text and el.text.strip():
+            if root_namespace is None:
+                root_namespace = el.text.strip()
+        elif tag == "ProjectReference":
             inc = el.attrib.get("Include")
             if inc:
                 proj_refs.append((base / inc).resolve())
@@ -56,7 +68,14 @@ def parse_csproj(csproj_path: Path) -> CsprojInfo:
             pkg = el.attrib.get("Include")
             if pkg:
                 pkg_refs.append(pkg)
-    return CsprojInfo(path=csproj_path.resolve(), name=name, project_references=proj_refs, package_references=pkg_refs)
+    domain = _domain_from_root_namespace(root_namespace)
+    return CsprojInfo(
+        path=csproj_path.resolve(),
+        name=name,
+        project_references=proj_refs,
+        package_references=pkg_refs,
+        domain=domain,
+    )
 
 
 def discover_solution_files(repo_root: Path) -> list[Path]:

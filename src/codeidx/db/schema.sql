@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   path TEXT NOT NULL UNIQUE,
-  kind TEXT NOT NULL
+  kind TEXT NOT NULL,
+  domain TEXT
 );
 
 CREATE TABLE IF NOT EXISTS project_files (
@@ -82,6 +83,19 @@ CREATE INDEX IF NOT EXISTS idx_edges_src_file ON edges(src_file_id);
 CREATE INDEX IF NOT EXISTS idx_edges_dst_sym ON edges(dst_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_edges_src_sym ON edges(src_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_edges_type ON edges(edge_type);
+
+CREATE TABLE IF NOT EXISTS features (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  domain TEXT,
+  viewmodel TEXT NOT NULL,
+  service TEXT,
+  project TEXT,
+  UNIQUE (viewmodel)
+);
+
+CREATE INDEX IF NOT EXISTS idx_features_name ON features(name);
+CREATE INDEX IF NOT EXISTS idx_features_project ON features(project);
 
 -- FTS5: file paths
 CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(

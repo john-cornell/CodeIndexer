@@ -174,18 +174,23 @@ def insert_edges_batch(
 
 
 def upsert_project(
-    conn: sqlite3.Connection, *, name: str, path: str, kind: str
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    path: str,
+    kind: str,
+    domain: str | None = None,
 ) -> int:
     row = conn.execute("SELECT id FROM projects WHERE path = ?", (path,)).fetchone()
     if row:
         conn.execute(
-            "UPDATE projects SET name = ?, kind = ? WHERE id = ?",
-            (name, kind, int(row[0])),
+            "UPDATE projects SET name = ?, kind = ?, domain = ? WHERE id = ?",
+            (name, kind, domain, int(row[0])),
         )
         return int(row[0])
     conn.execute(
-        "INSERT INTO projects(name, path, kind) VALUES (?,?,?)",
-        (name, path, kind),
+        "INSERT INTO projects(name, path, kind, domain) VALUES (?,?,?,?)",
+        (name, path, kind, domain),
     )
     return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 

@@ -295,6 +295,22 @@ def q_impl_of(ctx: click.Context, symbol_id: int, limit: int) -> None:
         click.echo(f"{r['qualified_name']}\t{r['path']}:{r['span_start_line']}")
 
 
+@query_group.command("features")
+@click.option("--name", default=None)
+@click.option("--limit", default=500, type=int)
+@click.pass_context
+def q_features(ctx: click.Context, name: str | None, limit: int) -> None:
+    db_path: Path = ctx.obj["db"]
+    rows = query_cmd.cmd_features(db_path, name=name, limit=limit)
+    for r in rows:
+        dom = r["domain"] or ""
+        svc = r["service"] or ""
+        proj = r["project"] or ""
+        click.echo(
+            f"{r['id']}\t{r['name']}\t{dom}\t{r['viewmodel']}\t{svc}\t{proj}"
+        )
+
+
 @query_group.command("path-search")
 @click.option("--substring", required=True)
 @click.option("--limit", default=200, type=int)
@@ -316,7 +332,7 @@ def q_stats(ctx: click.Context) -> None:
     click.echo(f"size_bytes:   {info['size_bytes']}")
     counts = info["counts"]
     assert isinstance(counts, dict)
-    for k in ("files", "symbols", "edges", "projects"):
+    for k in ("files", "symbols", "edges", "projects", "features"):
         click.echo(f"count_{k}: {counts.get(k, 0)}")
     meta = info["meta"]
     assert isinstance(meta, dict)

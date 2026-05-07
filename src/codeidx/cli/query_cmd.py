@@ -111,15 +111,41 @@ def cmd_implementations_of(db_path: Path, *, symbol_id: int, limit: int) -> list
     return rows
 
 
+def cmd_features(
+    db_path: Path, *, name: str | None, limit: int
+) -> list[sqlite3.Row]:
+    conn = _open(db_path)
+    if name:
+        rows = conn.execute(
+            """SELECT id, name, domain, viewmodel, service, project FROM features
+               WHERE name LIKE ? ORDER BY COALESCE(domain, ''), name LIMIT ?""",
+            (f"%{name}%", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT id, name, domain, viewmodel, service, project FROM features
+               ORDER BY COALESCE(domain, ''), name LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    conn.close()
+    return rows
+
+
 def cmd_index_stats(db_path: Path) -> dict[str, object]:
     conn = _open(db_path)
     meta_rows = conn.execute("SELECT key, value FROM meta ORDER BY key").fetchall()
     meta = {str(r[0]): str(r[1]) for r in meta_rows}
+    feat_count = 0
+    try:
+        feat_count = int(conn.execute("SELECT COUNT(*) FROM features").fetchone()[0])
+    except sqlite3.OperationalError:
+        pass
     counts = {
         "symbols": int(conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]),
         "edges": int(conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]),
         "files": int(conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]),
         "projects": int(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0]),
+        "features": feat_count,
     }
     conn.close()
     resolved = db_path.resolve()
