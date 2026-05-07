@@ -38,6 +38,8 @@ python -m codeidx index --sln path/to/Solution.sln
 python -m codeidx scan-obsidian --all-solutions --force   # index + vault
 ```
 
+Heuristic **`mvvm_view`** / **`mvvm_primary_service`** edges run **by default** after indexing. Opt out: **`--no-mvvm-edges`**. (String literal **`string_ref`** edges stay opt-in: **`--index-string-literals`**.)
+
 Windows helper (from CodeIndexer repo): `scan_full.bat` forwards `--all-solutions --force` plus your args.
 
 ---

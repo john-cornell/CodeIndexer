@@ -471,6 +471,7 @@ def run_index(
     extra_ignore: list[str] | None = None,
     force: bool = False,
     index_string_literals: bool = False,
+    index_mvvm_edges: bool = True,
     progress_callback: Callable[[IndexStats], None] | None = None,
     progress_every: int = 200,
     progress_time_s: float = 8.0,
@@ -663,6 +664,13 @@ def run_index(
         _build_features(conn)
     except Exception as e:
         stats.errors.append(f"features inference skipped: {e}")
+    if index_mvvm_edges:
+        try:
+            from codeidx.mvvm_edges import build_mvvm_edges as _build_mvvm_edges
+
+            _build_mvvm_edges(conn, repo_root)
+        except Exception as e:
+            stats.errors.append(f"mvvm edges skipped: {e}")
     conn.commit()
 
     dt = (time.perf_counter() - t0) * 1000

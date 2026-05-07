@@ -98,6 +98,12 @@ main.add_command(hook_group)
     help="Emit string_ref edges when a quoted literal matches exactly one type/interface/enum/delegate name (heuristic).",
 )
 @click.option(
+    "--no-mvvm-edges",
+    "no_mvvm_edges",
+    is_flag=True,
+    help="Skip heuristic mvvm_view / mvvm_primary_service edges (default: emit after index).",
+)
+@click.option(
     "--no-progress",
     "no_progress",
     is_flag=True,
@@ -114,6 +120,7 @@ def index_cmd(
     all_solutions: bool,
     no_sln: bool,
     index_string_literals: bool,
+    no_mvvm_edges: bool,
     no_progress: bool,
 ) -> None:
     """Scan REPO and update DB. If REPO is omitted, uses the current directory."""
@@ -179,6 +186,7 @@ def index_cmd(
         extra_ignore=list(extra_ignores) if extra_ignores else None,
         force=force,
         index_string_literals=index_string_literals,
+        index_mvvm_edges=not no_mvvm_edges,
         progress_callback=None if no_progress else _on_progress,
     )
     click.echo("Index complete.")
@@ -511,6 +519,12 @@ def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path | None) -> No
     help="Emit string_ref edges for unique type-like string literals.",
 )
 @click.option(
+    "--no-mvvm-edges",
+    "no_mvvm_edges",
+    is_flag=True,
+    help="Skip heuristic mvvm_view / mvvm_primary_service edges (default: emit after index).",
+)
+@click.option(
     "--no-progress",
     "no_progress",
     is_flag=True,
@@ -531,6 +545,7 @@ def scan_obsidian_cmd(
     no_sln: bool,
     force: bool,
     index_string_literals: bool,
+    no_mvvm_edges: bool,
     no_progress: bool,
     out_dir: Path | None,
 ) -> None:
@@ -592,6 +607,7 @@ def scan_obsidian_cmd(
         extra_ignore=None,
         force=force,
         index_string_literals=index_string_literals,
+        index_mvvm_edges=not no_mvvm_edges,
         progress_callback=None if no_progress else _on_progress,
     )
     click.echo("Index complete.")
