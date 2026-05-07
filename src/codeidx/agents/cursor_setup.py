@@ -88,7 +88,15 @@ def setup_cursor(
 
     server_spec = {
         "command": "python",
-        "args": ["-m", "codeidx", "mcp", "--db", str(db_path.resolve())],
+        "args": [
+            "-m",
+            "codeidx",
+            "mcp",
+            "--repo",
+            str(repo_root.resolve()),
+            "--db",
+            str(db_path.resolve()),
+        ],
     }
 
     mcp_action = "skip"
