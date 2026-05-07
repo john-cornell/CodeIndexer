@@ -50,6 +50,8 @@ Writes under **`REPO/.cursor/`**:
 
 **Not configured by `init-agents`:** Cursor’s native **`.cursor/hooks.json`** (different product feature). This command sets up **MCP + skill**, not Cursor hook scripts.
 
+**Claude Code vs Cursor for MCP:** **`init-agents` only merges the codeidx stdio MCP into Cursor** (`.cursor/mcp.json`). It does **not** add **`mcpServers`** to **`~/.claude/settings.json`** or **`.claude/settings*.json`**. So in Claude Code, **`read_query` / note tools** from the **codeidx** server appear **only after you register that server yourself** (see below). A separate **generic SQLite** MCP (e.g. `user-sqlite`) gives SQL only — it does **not** include **`get_or_create_note`** / **`append_note`**.
+
 ### Claude Code (`--agent claude` or `all`)
 
 Merges **`REPO/.claude/settings.local.json`** (creates it if missing). Adds **idempotent** hook groups (skips if the same logical hook is already present).
@@ -72,6 +74,33 @@ Also merges a short **codeidx** section into **`REPO/CLAUDE.md`** (between HTML 
 - **Project:** `REPO/.claude/settings.local.json` — applies when the project is loaded.
 
 Both apply together. Your global **PreToolUse** hooks (e.g. a Bash rewriter) and project **codeidx** hooks can all run; they are not mutually exclusive.
+
+### Registering the codeidx MCP server in Claude Code (WSL / Linux / macOS)
+
+Merge a top-level **`mcpServers`** object into **`~/.claude/settings.json`** (user) or **`REPO/.claude/settings.json`** (project), or use the **`claude mcp add`** flow from [Claude Code MCP docs](https://code.claude.com/docs/en/agent-sdk/mcp). Use the **same** **`--repo`** and **`--db`** paths you use for **`index`** in that environment (WSL: **`/mnt/c/...`**, not **`C:\...`**).
+
+Example (WSL, billing repo — adjust paths; merge with existing JSON keys):
+
+```json
+{
+  "mcpServers": {
+    "codeidx": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "codeidx",
+        "mcp",
+        "--repo",
+        "/mnt/c/Code/billing",
+        "--db",
+        "/mnt/c/Code/billing/.codeidx/db/codeidx.db"
+      ]
+    }
+  }
+}
+```
+
+If **`codeidx`** is on **`PATH`** as a shim, you can use **`"command": "codeidx"`** and **`"args": ["mcp", "--repo", "...", "--db", "..."]`** instead. Restart the Claude Code session (or reload MCP) after editing settings.
 
 ## Default database path (`--db` omitted)
 
