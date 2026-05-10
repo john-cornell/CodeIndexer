@@ -1,5 +1,7 @@
 # CodeIndexer (`codeidx`)
 
+**Version: 0.3.1**
+
 **CodeIndexer** is a small CLI that indexes C# codebases into a **SQLite** database: symbols, FTS search, call/inheritance edges, and MSBuild project references. It is built for **local tooling and AI assistants** (Cursor MCP, custom scripts) that need structured queries instead of rescanning the tree on every question.
 
 The Python package name is **`codeidx`**.
@@ -142,12 +144,15 @@ python -m codeidx index [REPO] [options]
 | `--all-solutions` | Discover **every** `.sln` under `REPO`, **merge** all referenced projects (de-duplicated) into one MSBuild graph, then index. Use for monorepos with many solutions: stronger cross-project resolution than `--no-sln` and no per-solution loop. Incompatible with `--no-sln`, `--sln`, and `--csproj`. |
 | `--no-sln` | Skip `.sln` / `.csproj` discovery and **any interactive prompt**; index all files under `REPO` without a solution graph (faster, weaker resolution). Incompatible with `--sln` / `--csproj` and with `--all-solutions`. |
 | `--no-progress` | Suppress periodic **stderr** progress lines (default: a line every 200 `.cs` files or every 8 seconds). |
+| `--parallel N` | Parse **N** `.cs` files in parallel with worker processes (`1` = sequential, default). Large repos benefit from `4`–`8`. |
 | `--index-string-literals` | Emit **`string_ref`** edges when a quoted literal uniquely matches a type/interface/enum/delegate **name** (heuristic; see TRADEOFFS). |
 | `--no-mvvm-edges` | Skip post-index **`mvvm_view`** / **`mvvm_primary_service`** edges (default: emit). |
 | `--store-content` | Store raw file text for `grep-text` / `file_contents_fts` (larger DB) |
 | `--ignore PATTERN` | Extra gitignore-style ignore (repeatable) |
 
-**Incremental behavior:** unchanged files (same size, mtime, hash) are **skipped**. If you see `files_parsed: 0` and expected updates, run with **`--force`** or delete the DB and re-index.
+**Incremental behavior:** unchanged files (same size, mtime, hash) are **skipped**. **Cold** index (empty `files` table) or **`--force`** skips the extra fingerprint hash read; the stored SHA-256 is taken from the bytes read during parsing so the next incremental run can skip unchanged files. If you see `files_parsed: 0` and expected updates, run with **`--force`** or delete the DB and re-index.
+
+After a run, **`index`** prints **`phase_*_ms`** timings (fingerprint scan, parse, DB writes, inheritance repair) for profiling.
 
 If both **`--sln`** and **`--csproj`** are passed, the solution wins for the project graph (a note is printed).
 

@@ -63,7 +63,7 @@ def iter_files(
             yield p
 
 
-def file_fingerprint(path: Path) -> FileStat:
+def file_fingerprint(path: Path, *, skip_hash: bool = False) -> FileStat:
     size, mtime_ns = stat_file(path)
-    digest = hash_file(path)
+    digest = "" if skip_hash else hash_file(path)
     return FileStat(path=path, size=size, mtime_ns=mtime_ns, sha256=digest)

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import click
 
-from codeidx import notes
+from codeidx import __version__, notes
 from codeidx.cli import obsidian, query_cmd
 from codeidx.cli.hook_cmd import hook_group
 from codeidx.cli.init_agents_cmd import register_init_agents
@@ -109,6 +109,14 @@ main.add_command(hook_group)
     is_flag=True,
     help="Do not print periodic progress to stderr (default: show: every 200 .cs files or every 8s).",
 )
+@click.option(
+    "--parallel",
+    "parallel_workers",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of worker processes for parsing .cs files (1 = sequential).",
+)
 def index_cmd(
     repo: Path | None,
     db_path: Path | None,
@@ -122,6 +130,7 @@ def index_cmd(
     index_string_literals: bool,
     no_mvvm_edges: bool,
     no_progress: bool,
+    parallel_workers: int,
 ) -> None:
     """Scan REPO and update DB. If REPO is omitted, uses the current directory."""
     root = (repo or Path(".")).resolve()
@@ -188,8 +197,9 @@ def index_cmd(
         index_string_literals=index_string_literals,
         index_mvvm_edges=not no_mvvm_edges,
         progress_callback=None if no_progress else _on_progress,
+        parallel_workers=max(1, parallel_workers),
     )
-    click.echo("Index complete.")
+    click.echo(f"Index complete. (codeidx {__version__})")
     click.echo(f"  files_scanned:          {stats.files_scanned}")
     click.echo(f"  files_skipped_unchanged:{stats.files_skipped_unchanged}")
     click.echo(f"  files_parsed:           {stats.files_parsed}")
@@ -197,6 +207,10 @@ def index_cmd(
     click.echo(f"  edges_written:          {stats.edges_written}")
     click.echo(f"  bytes_read:             {stats.bytes_read}")
     click.echo(f"  elapsed_ms:             {stats.elapsed_ms:.1f}")
+    click.echo(f"  phase_fingerprint_ms:   {stats.phase_fingerprint_ms:.1f}")
+    click.echo(f"  phase_parse_ms:         {stats.phase_parse_ms:.1f}")
+    click.echo(f"  phase_db_write_ms:      {stats.phase_db_write_ms:.1f}")
+    click.echo(f"  phase_repair_ms:        {stats.phase_repair_ms:.1f}")
     for err in stats.errors:
         click.echo(f"  error: {err}", err=True)
 
@@ -537,6 +551,14 @@ def notes_sync(ctx: click.Context, symbol_name: str, db_path: Path | None) -> No
     help="Do not print periodic progress lines while indexing.",
 )
 @click.option(
+    "--parallel",
+    "parallel_workers",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Number of worker processes for parsing .cs files (1 = sequential).",
+)
+@click.option(
     "--out-dir",
     type=click.Path(path_type=Path),
     default=None,
@@ -554,6 +576,7 @@ def scan_obsidian_cmd(
     index_string_literals: bool,
     no_mvvm_edges: bool,
     no_progress: bool,
+    parallel_workers: int,
     out_dir: Path | None,
 ) -> None:
     """Index and export Obsidian vault in one command."""
@@ -616,8 +639,9 @@ def scan_obsidian_cmd(
         index_string_literals=index_string_literals,
         index_mvvm_edges=not no_mvvm_edges,
         progress_callback=None if no_progress else _on_progress,
+        parallel_workers=max(1, parallel_workers),
     )
-    click.echo("Index complete.")
+    click.echo(f"Index complete. (codeidx {__version__})")
     click.echo(f"  files_scanned:          {stats.files_scanned}")
     click.echo(f"  files_skipped_unchanged:{stats.files_skipped_unchanged}")
     click.echo(f"  files_parsed:           {stats.files_parsed}")
@@ -625,6 +649,10 @@ def scan_obsidian_cmd(
     click.echo(f"  edges_written:          {stats.edges_written}")
     click.echo(f"  bytes_read:             {stats.bytes_read}")
     click.echo(f"  elapsed_ms:             {stats.elapsed_ms:.1f}")
+    click.echo(f"  phase_fingerprint_ms:   {stats.phase_fingerprint_ms:.1f}")
+    click.echo(f"  phase_parse_ms:         {stats.phase_parse_ms:.1f}")
+    click.echo(f"  phase_db_write_ms:      {stats.phase_db_write_ms:.1f}")
+    click.echo(f"  phase_repair_ms:        {stats.phase_repair_ms:.1f}")
     for err in stats.errors:
         click.echo(f"  error: {err}", err=True)
 

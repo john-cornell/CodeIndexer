@@ -18,7 +18,12 @@ class FileRecord:
     language: str
 
 
-def ensure_folder_chain(conn: sqlite3.Connection, abs_path: Path) -> int:
+def ensure_folder_chain(
+    conn: sqlite3.Connection,
+    abs_path: Path,
+    *,
+    folder_cache: dict[str, int] | None = None,
+) -> int:
     """Return folder id for the parent directory of abs_path (file path)."""
     parent = abs_path.parent
     parts: list[Path] = []
@@ -33,17 +38,26 @@ def ensure_folder_chain(conn: sqlite3.Connection, abs_path: Path) -> int:
     parent_id: int | None = None
     folder_id = 0
     for p in parts:
-        row = conn.execute("SELECT id FROM folders WHERE path = ?", (str(p),)).fetchone()
+        cache_key = str(p)
+        if folder_cache is not None and cache_key in folder_cache:
+            folder_id = folder_cache[cache_key]
+            parent_id = folder_id
+            continue
+        row = conn.execute("SELECT id FROM folders WHERE path = ?", (cache_key,)).fetchone()
         if row:
             folder_id = int(row[0])
             parent_id = folder_id
+            if folder_cache is not None:
+                folder_cache[cache_key] = folder_id
             continue
         conn.execute(
             "INSERT INTO folders(path, parent_id) VALUES (?, ?)",
-            (str(p), parent_id),
+            (cache_key, parent_id),
         )
         folder_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
         parent_id = folder_id
+        if folder_cache is not None:
+            folder_cache[cache_key] = folder_id
     return folder_id
 
 
@@ -122,15 +136,24 @@ def insert_symbols_batch(
     rows: Sequence[tuple[str, str, str, int, int, int, int, str | None]],
 ) -> list[int]:
     """rows: kind, name, qualified_name, sl, el, sc, ec, ts_node_id"""
-    ids: list[int] = []
-    for r in rows:
-        conn.execute(
-            """INSERT INTO symbols(file_id, kind, name, qualified_name,
-               span_start_line, span_end_line, span_start_col, span_end_col, ts_node_id)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (file_id, *r),
+    rows_list = list(rows)
+    if not rows_list:
+        return []
+    conn.executemany(
+        """INSERT INTO symbols(file_id, kind, name, qualified_name,
+           span_start_line, span_end_line, span_start_col, span_end_col, ts_node_id)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        [(file_id, *r) for r in rows_list],
+    )
+    cur = conn.execute(
+        "SELECT id FROM symbols WHERE file_id = ? ORDER BY id",
+        (file_id,),
+    )
+    ids = [int(r[0]) for r in cur.fetchall()]
+    if len(ids) != len(rows_list):
+        raise RuntimeError(
+            f"insert_symbols_batch id count mismatch: expected {len(rows_list)}, got {len(ids)}"
         )
-        ids.append(int(conn.execute("SELECT last_insert_rowid()").fetchone()[0]))
     return ids
 
 
@@ -152,25 +175,15 @@ def insert_edges_batch(
         ]
     ],
 ) -> None:
-    for (
-        src_sym,
-        dst_sym,
-        src_file,
-        dst_file,
-        etype,
-        conf,
-        rl,
-        rc,
-        rle,
-        rce,
-        meta,
-    ) in rows:
-        conn.execute(
-            """INSERT INTO edges(src_symbol_id, dst_symbol_id, src_file_id, dst_file_id,
-               edge_type, confidence, ref_start_line, ref_start_col, ref_end_line, ref_end_col, meta_json)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (src_sym, dst_sym, src_file, dst_file, etype, conf, rl, rc, rle, rce, meta),
-        )
+    batch = list(rows)
+    if not batch:
+        return
+    conn.executemany(
+        """INSERT INTO edges(src_symbol_id, dst_symbol_id, src_file_id, dst_file_id,
+           edge_type, confidence, ref_start_line, ref_start_col, ref_end_line, ref_end_col, meta_json)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        batch,
+    )
 
 
 def upsert_project(

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
-from collections.abc import Callable
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from codeidx.db.connection import apply_schema, connect
 from codeidx.indexer.ignore import build_spec
-from codeidx.indexer.walk import file_fingerprint, iter_files
+from codeidx.indexer.symbol_index import SymbolIndex
+from codeidx.indexer.walk import FileStat, file_fingerprint, iter_files
 from codeidx.languages.base import EdgeRow, LanguageHandler, ParseResult, SymbolRow
 from codeidx.languages.csharp import CSharpHandler
 from codeidx.projects.msbuild import (
@@ -34,16 +36,24 @@ from codeidx.storage import (
 )
 
 
-@dataclass
-class IndexStats:
-    files_scanned: int = 0
-    files_skipped_unchanged: int = 0
-    files_parsed: int = 0
-    symbols_written: int = 0
-    edges_written: int = 0
-    bytes_read: int = 0
-    elapsed_ms: float = 0.0
-    errors: list[str] = field(default_factory=list)
+def _parse_cs_file_worker(args: tuple[str, bool]) -> tuple[str, ParseResult | None, str | None]:
+    """Parse one .cs file in a worker process. Returns (resolved_path, result, error)."""
+    path_str, index_string_literals = args
+    path = Path(path_str)
+    try:
+        text = path.read_bytes()
+        handler = CSharpHandler()
+        result = handler.parse_file(
+            path, text, index_string_literals=index_string_literals
+        )
+        return path_str, result, None
+    except Exception as e:
+        return path_str, None, str(e)
+
+
+def _files_row_count(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM files").fetchone()
+    return int(row[0]) if row else 0
 
 
 def _handlers() -> list[LanguageHandler]:
@@ -79,7 +89,11 @@ def _resolve_symbol_id(
     project_file_ids: set[int],
     name: str | None,
     qualified_guess: str | None,
+    *,
+    symbol_index: SymbolIndex | None = None,
 ) -> tuple[int | None, str]:
+    if symbol_index is not None:
+        return symbol_index.resolve_symbol_id(project_file_ids, name, qualified_guess)
     if not name and not qualified_guess:
         return None, "unresolved"
     if qualified_guess:
@@ -123,7 +137,6 @@ def _cs_base_short(base: str) -> str:
 
 
 def _string_ref_literal_eligible(literal: str) -> bool:
-    """Same rules as csharp._literal_looks_like_type_name (Pascal-ish, len>=4)."""
     if len(literal) < 4:
         return False
     if not literal[0].isupper():
@@ -132,11 +145,15 @@ def _string_ref_literal_eligible(literal: str) -> bool:
 
 
 def _resolve_string_ref_dst(
-    conn: sqlite3.Connection, literal: str
+    conn: sqlite3.Connection,
+    literal: str,
+    *,
+    symbol_index: SymbolIndex | None = None,
 ) -> tuple[int | None, str]:
-    """Only link when exactly one type-like symbol shares this name."""
     if not _string_ref_literal_eligible(literal):
         return None, "unresolved"
+    if symbol_index is not None:
+        return symbol_index.resolve_string_ref_dst(literal)
     rows = conn.execute(
         """SELECT id FROM symbols WHERE name = ?
            AND kind IN ('type', 'interface', 'enum', 'delegate')""",
@@ -148,7 +165,6 @@ def _resolve_string_ref_dst(
 
 
 def _cs_interface_name_heuristic(short: str) -> bool:
-    """C# convention: interface names often start with I + uppercase letter."""
     if len(short) < 2:
         return False
     return short[0] == "I" and short[1].isupper()
@@ -172,7 +188,11 @@ def _resolve_unique_interface_by_name(
     conn: sqlite3.Connection,
     name: str,
     scope_file_ids: set[int],
+    *,
+    symbol_index: SymbolIndex | None = None,
 ) -> int | None:
+    if symbol_index is not None:
+        return symbol_index.resolve_unique_interface_by_name(name, scope_file_ids)
     rows = conn.execute(
         "SELECT id, file_id FROM symbols WHERE name = ? AND kind = ?",
         (name, "interface"),
@@ -193,16 +213,34 @@ def _resolve_inheritance_dst(
     scope_file_ids: set[int],
     base: str,
     short: str,
+    *,
+    symbol_index: SymbolIndex | None = None,
 ) -> tuple[int | None, str]:
     if not short:
         return None, "unresolved"
-    dst_id, conf = _resolve_symbol_id(conn, scope_file_ids, short, base or None)
+    dst_id, conf = _resolve_symbol_id(
+        conn, scope_file_ids, short, base or None, symbol_index=symbol_index
+    )
     if dst_id is not None:
         return dst_id, conf
-    uid = _resolve_unique_interface_by_name(conn, short, scope_file_ids)
+    uid = _resolve_unique_interface_by_name(
+        conn, short, scope_file_ids, symbol_index=symbol_index
+    )
     if uid is not None:
         return uid, "heuristic"
     return None, "unresolved"
+
+
+def _symbol_kind(
+    conn: sqlite3.Connection,
+    symbol_id: int,
+    *,
+    symbol_index: SymbolIndex | None = None,
+) -> str | None:
+    if symbol_index is not None:
+        return symbol_index.kind(symbol_id)
+    row = conn.execute("SELECT kind FROM symbols WHERE id = ?", (symbol_id,)).fetchone()
+    return str(row[0]) if row else None
 
 
 def _inheritance_edge_type_final(
@@ -210,9 +248,11 @@ def _inheritance_edge_type_final(
     dst_id: int | None,
     conn: sqlite3.Connection,
     short: str,
+    *,
+    symbol_index: SymbolIndex | None = None,
 ) -> str:
     if dst_id is not None:
-        sk = _symbol_kind(conn, dst_id)
+        sk = _symbol_kind(conn, dst_id, symbol_index=symbol_index)
         if sk == "interface":
             return "implements"
         return parser_edge
@@ -227,12 +267,13 @@ def _merge_inheritance_meta(
     short: str,
     dst_id: int | None,
     conn: sqlite3.Connection,
+    symbol_index: SymbolIndex | None = None,
 ) -> str:
     meta: dict = dict(base_meta) if base_meta else {}
     meta["base_short"] = short
     if dst_id is not None:
         meta["base_resolved"] = True
-        sk = _symbol_kind(conn, dst_id)
+        sk = _symbol_kind(conn, dst_id, symbol_index=symbol_index)
         if sk:
             meta["dst_kind"] = sk
     else:
@@ -243,8 +284,9 @@ def _merge_inheritance_meta(
     return json_dumps(meta)
 
 
-def _repair_unresolved_inheritance_edges(conn: sqlite3.Connection) -> int:
-    """Re-resolve base list edges after all files are indexed (ordering-independent)."""
+def _repair_unresolved_inheritance_edges(
+    conn: sqlite3.Connection, *, symbol_index: SymbolIndex | None = None
+) -> int:
     full_scope = _all_indexed_file_ids(conn)
     rows = conn.execute(
         """SELECT id, edge_type, meta_json FROM edges
@@ -263,18 +305,28 @@ def _repair_unresolved_inheritance_edges(conn: sqlite3.Connection) -> int:
         short = _cs_base_short(base)
         if not short:
             continue
-        dst_id, conf = _resolve_inheritance_dst(conn, full_scope, base, short)
+        dst_id, conf = _resolve_inheritance_dst(
+            conn, full_scope, base, short, symbol_index=symbol_index
+        )
         if dst_id is None:
-            new_type = _inheritance_edge_type_final(str(et), None, conn, short)
-            new_meta = _merge_inheritance_meta(meta, short=short, dst_id=None, conn=conn)
+            new_type = _inheritance_edge_type_final(
+                str(et), None, conn, short, symbol_index=symbol_index
+            )
+            new_meta = _merge_inheritance_meta(
+                meta, short=short, dst_id=None, conn=conn, symbol_index=symbol_index
+            )
             conn.execute(
                 """UPDATE edges SET edge_type = ?, confidence = 'unresolved', meta_json = ?
                    WHERE id = ?""",
                 (new_type, new_meta, eid),
             )
             continue
-        new_type = _inheritance_edge_type_final(str(et), dst_id, conn, short)
-        new_meta = _merge_inheritance_meta(meta, short=short, dst_id=dst_id, conn=conn)
+        new_type = _inheritance_edge_type_final(
+            str(et), dst_id, conn, short, symbol_index=symbol_index
+        )
+        new_meta = _merge_inheritance_meta(
+            meta, short=short, dst_id=dst_id, conn=conn, symbol_index=symbol_index
+        )
         conn.execute(
             """UPDATE edges SET dst_symbol_id = ?, confidence = ?, edge_type = ?, meta_json = ?
                WHERE id = ?""",
@@ -284,17 +336,14 @@ def _repair_unresolved_inheritance_edges(conn: sqlite3.Connection) -> int:
     return updated
 
 
-def _symbol_kind(conn: sqlite3.Connection, symbol_id: int) -> str | None:
-    row = conn.execute("SELECT kind FROM symbols WHERE id = ?", (symbol_id,)).fetchone()
-    return str(row[0]) if row else None
-
-
 def _emit_edges(
     conn: sqlite3.Connection,
     file_id: int,
     resolution_file_ids: set[int],
     qname_to_id: dict[str, int],
     rows: list[EdgeRow],
+    *,
+    symbol_index: SymbolIndex | None = None,
 ) -> int:
     out: list[
         tuple[
@@ -338,18 +387,19 @@ def _emit_edges(
             base = (e.dst_qualified_guess or "").strip()
             short = _cs_base_short(base)
             dst_id, conf = _resolve_inheritance_dst(
-                conn, resolution_file_ids, base, short
+                conn, resolution_file_ids, base, short, symbol_index=symbol_index
             )
             if dst_id is None:
                 conf = "unresolved"
             edge_type_out = _inheritance_edge_type_final(
-                e.edge_type, dst_id, conn, short
+                e.edge_type, dst_id, conn, short, symbol_index=symbol_index
             )
             meta = _merge_inheritance_meta(
                 e.meta if isinstance(e.meta, dict) else None,
                 short=short,
                 dst_id=dst_id,
                 conn=conn,
+                symbol_index=symbol_index,
             )
             out.append(
                 (
@@ -373,6 +423,7 @@ def _emit_edges(
                 resolution_file_ids,
                 str(simple) if simple else None,
                 e.dst_qualified_guess,
+                symbol_index=symbol_index,
             )
             out.append(
                 (
@@ -392,7 +443,11 @@ def _emit_edges(
             continue
         if e.edge_type == "injects":
             dst_id, conf = _resolve_symbol_id(
-                conn, resolution_file_ids, None, e.dst_qualified_guess
+                conn,
+                resolution_file_ids,
+                None,
+                e.dst_qualified_guess,
+                symbol_index=symbol_index,
             )
             out.append(
                 (
@@ -412,7 +467,9 @@ def _emit_edges(
             continue
         if e.edge_type == "string_ref":
             lit = (e.dst_qualified_guess or "").strip()
-            dst_id, conf = _resolve_string_ref_dst(conn, lit)
+            dst_id, conf = _resolve_string_ref_dst(
+                conn, lit, symbol_index=symbol_index
+            )
             if dst_id is None:
                 continue
             meta = json_dumps(
@@ -438,7 +495,11 @@ def _emit_edges(
             )
             continue
         dst_id, conf = _resolve_symbol_id(
-            conn, resolution_file_ids, None, e.dst_qualified_guess
+            conn,
+            resolution_file_ids,
+            None,
+            e.dst_qualified_guess,
+            symbol_index=symbol_index,
         )
         out.append(
             (
@@ -460,6 +521,22 @@ def _emit_edges(
     return len(out)
 
 
+@dataclass
+class IndexStats:
+    files_scanned: int = 0
+    files_skipped_unchanged: int = 0
+    files_parsed: int = 0
+    symbols_written: int = 0
+    edges_written: int = 0
+    bytes_read: int = 0
+    elapsed_ms: float = 0.0
+    errors: list[str] = field(default_factory=list)
+    phase_fingerprint_ms: float = 0.0
+    phase_parse_ms: float = 0.0
+    phase_db_write_ms: float = 0.0
+    phase_repair_ms: float = 0.0
+
+
 def run_index(
     repo_root: Path,
     db_path: Path,
@@ -475,6 +552,9 @@ def run_index(
     progress_callback: Callable[[IndexStats], None] | None = None,
     progress_every: int = 200,
     progress_time_s: float = 8.0,
+    parallel_workers: int = 1,
+    commit_every_files: int = 500,
+    commit_every_s: float = 10.0,
 ) -> IndexStats:
     stats = IndexStats()
     t0 = time.perf_counter()
@@ -551,10 +631,30 @@ def run_index(
     conn.commit()
 
     all_proj_ids = list(proj_id_by_path.values())
+    symbol_index = SymbolIndex()
+    folder_cache: dict[str, int] = {}
+    resolution_file_ids = _resolution_file_ids_for_solution(conn, all_proj_ids)
+
+    skip_hash = force or _files_row_count(conn) == 0
+    workers = max(1, parallel_workers)
 
     exts = {".cs"}
     last_report_t = time.perf_counter()
     last_report_scanned = 0
+
+    files_since_commit = 0
+    last_commit_t = time.perf_counter()
+
+    def _maybe_commit(force_flush: bool = False) -> None:
+        nonlocal files_since_commit, last_commit_t
+        now = time.perf_counter()
+        if force_flush or (
+            files_since_commit >= commit_every_files
+            or (now - last_commit_t) >= commit_every_s
+        ):
+            conn.commit()
+            files_since_commit = 0
+            last_commit_t = now
 
     def _maybe_progress() -> None:
         if progress_callback is None:
@@ -573,17 +673,22 @@ def run_index(
             last_report_t = now
             last_report_scanned = stats.files_scanned
 
+    pending_dirty: list[tuple[Path, FileStat, str, int]] = []
+
     for path in iter_files(repo_root, spec, exts):
         try:
             stats.files_scanned += 1
             rel = str(path.resolve())
+            t_fp0 = time.perf_counter()
             try:
-                fp = file_fingerprint(path)
+                fp = file_fingerprint(path, skip_hash=skip_hash)
             except OSError as e:
                 stats.errors.append(f"{rel}: {e}")
                 continue
+            dt_fp = (time.perf_counter() - t_fp0) * 1000
+            stats.phase_fingerprint_ms += dt_fp
             stats.bytes_read += fp.size
-            folder_id = ensure_folder_chain(conn, path)
+            folder_id = ensure_folder_chain(conn, path, folder_cache=folder_cache)
             prev = get_file_by_path(conn, rel)
             if (
                 not force
@@ -598,15 +703,56 @@ def run_index(
             h = _handler_for(path, handlers)
             if not h:
                 continue
-            text = path.read_bytes()
-            try:
-                parsed: ParseResult = h.parse_file(
-                    path, text, index_string_literals=index_string_literals
-                )
-            except Exception as e:
-                stats.errors.append(f"{rel}: parse: {e}")
+
+            pending_dirty.append((path, fp, rel, folder_id))
+        finally:
+            _maybe_progress()
+
+    t_parse0 = time.perf_counter()
+    parse_by_rel: dict[str, tuple[ParseResult | None, str | None]] = {}
+    if pending_dirty:
+        if workers > 1:
+            args_list = [
+                (str(p.resolve()), index_string_literals) for p, _, _, _ in pending_dirty
+            ]
+            with ProcessPoolExecutor(max_workers=workers) as ex:
+                for path_str, pr, err in ex.map(_parse_cs_file_worker, args_list):
+                    parse_by_rel[path_str] = (pr, err)
+        else:
+            h0 = CSharpHandler()
+            for path, _fp, rel, _fid in pending_dirty:
+                try:
+                    text = path.read_bytes()
+                    pr = h0.parse_file(
+                        path,
+                        text,
+                        index_string_literals=index_string_literals,
+                    )
+                    parse_by_rel[rel] = (pr, None)
+                except Exception as e:
+                    parse_by_rel[rel] = (None, str(e))
+    stats.phase_parse_ms = (time.perf_counter() - t_parse0) * 1000
+
+    last_report_t = time.perf_counter()
+    last_report_scanned = stats.files_scanned
+
+    for path, fp, rel, folder_id in pending_dirty:
+        try:
+            pr, parse_err = parse_by_rel[rel]
+            if parse_err:
+                stats.errors.append(f"{rel}: parse: {parse_err}")
+                continue
+            if pr is None:
+                stats.errors.append(f"{rel}: parse: empty result")
                 continue
 
+            h = _handler_for(path, handlers)
+            if not h:
+                continue
+
+            t_db0 = time.perf_counter()
+            text = path.read_bytes()
+            sha256_stored = fp.sha256 or hashlib.sha256(text).hexdigest()
             content = text.decode("utf-8", errors="replace") if store_content else None
             file_id = upsert_file(
                 conn,
@@ -614,11 +760,20 @@ def run_index(
                 folder_id=folder_id,
                 size=fp.size,
                 mtime_ns=fp.mtime_ns,
-                sha256=fp.sha256,
+                sha256=sha256_stored,
                 language=h.name,
                 content=content,
                 store_content=store_content,
             )
+
+            ev_rows = conn.execute(
+                "SELECT id, qualified_name, name, kind FROM symbols WHERE file_id = ?",
+                (file_id,),
+            ).fetchall()
+            if ev_rows:
+                symbol_index.evict_file(
+                    [(int(a), str(b), str(c), str(d)) for a, b, c, d in ev_rows]
+                )
             clear_file_index_data(conn, file_id)
 
             sym_rows = [
@@ -632,32 +787,46 @@ def run_index(
                     s.span_end_col,
                     s.ts_node_id,
                 )
-                for s in parsed.symbols
+                for s in pr.symbols
             ]
-            insert_symbols_batch(conn, file_id, sym_rows)
+            ids = insert_symbols_batch(conn, file_id, sym_rows)
             stats.symbols_written += len(sym_rows)
+            symbol_index.register_symbols(file_id, pr.symbols, ids)
 
-            rows = conn.execute(
-                "SELECT id, qualified_name FROM symbols WHERE file_id = ?",
-                (file_id,),
-            ).fetchall()
-            qname_to_id = {str(r[1]): int(r[0]) for r in rows}
+            qname_to_id = {
+                s.qualified_name: sid
+                for s, sid in zip(pr.symbols, ids, strict=True)
+            }
 
             pinfo = _pick_project_for_file(path, csproj_infos)
             if pinfo:
                 pid = proj_id_by_path.get(str(pinfo.path))
                 if pid is not None:
                     link_project_file(conn, pid, file_id)
+                    resolution_file_ids.add(file_id)
 
-            resolution_file_ids = _resolution_file_ids_for_solution(conn, all_proj_ids)
-            ec = _emit_edges(conn, file_id, resolution_file_ids, qname_to_id, parsed.edges)
+            ec = _emit_edges(
+                conn,
+                file_id,
+                resolution_file_ids,
+                qname_to_id,
+                pr.edges,
+                symbol_index=symbol_index,
+            )
             stats.edges_written += ec
             stats.files_parsed += 1
-            conn.commit()
+            stats.phase_db_write_ms += (time.perf_counter() - t_db0) * 1000
+
+            files_since_commit += 1
+            _maybe_commit()
         finally:
             _maybe_progress()
 
-    _repair_unresolved_inheritance_edges(conn)
+    _maybe_commit(force_flush=True)
+
+    t_rep0 = time.perf_counter()
+    _repair_unresolved_inheritance_edges(conn, symbol_index=symbol_index)
+    stats.phase_repair_ms = (time.perf_counter() - t_rep0) * 1000
     try:
         from codeidx.features import build_features as _build_features
 
